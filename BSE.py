@@ -958,26 +958,27 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
 #############################
 
 ## Below here is where we set up and run a series of experiments
-        
-supply_schedule = {'ranges':[(10,190)], 'mode':'fixed'}
-demand_schedule = {'ranges':[(10,190)], 'mode':'jittered'}
-order_schedule = {'sup':supply_schedule, 'dem':demand_schedule, 'interval':30}
 
-buyers_spec = [('SHVR',31)]
+if __name__ == "__main__":
+    supply_schedule = {'ranges':[(10,190)], 'mode':'fixed'}
+    demand_schedule = {'ranges':[(10,190)], 'mode':'jittered'}
+    order_schedule = {'sup':supply_schedule, 'dem':demand_schedule, 'interval':30}
 
-sellers_spec = buyers_spec
-traders_spec = {'sellers':sellers_spec, 'buyers':buyers_spec}
+    buyers_spec = [('SHVR',31)]
 
-# this is it
+    sellers_spec = buyers_spec
+    traders_spec = {'sellers':sellers_spec, 'buyers':buyers_spec}
 
-n_trials = 1
-tdump=open('avg_balance.csv','w')
-trial = 1
-while (trial<(n_trials+1)):
-        trial_id = 'trial%04d' % trial
-        market_session(trial_id, 0.0, 180, traders_spec, order_schedule, tdump, False)
-        tdump.flush()
-        trial = trial + 1
-tdump.close()
+    # this is it
+
+    n_trials = 1
+    tdump=open('avg_balance.csv','w')
+    trial = 1
+    while (trial<(n_trials+1)):
+            trial_id = 'trial%04d' % trial
+            market_session(trial_id, 0.0, 180, traders_spec, order_schedule, tdump, False)
+            tdump.flush()
+            trial = trial + 1
+    tdump.close()
 
 
