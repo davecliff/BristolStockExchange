@@ -11,4 +11,4 @@ Real exchanges are much much more complicated than this.
 The code is open-sourced via the MIT Licence: see the LICENSE file for full text. 
 (copied from http://opensource.org/licenses/mit-license.php)
 
-Last update: Dave Cliff, October 25th 2012. 
+Last update: Dave Cliff, October 25th 2012.
