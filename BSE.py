@@ -821,7 +821,7 @@ def customer_orders(time, last_update, traders, trader_stats, os, verbose):
         def sysmin_check(price):
                 if price < bse_sys_minprice:
                         print('WARNING: price < bse_sys_min -- clipped')
-                        price = bse_sys_minval
+                        price = bse_sys_minprice
                 return price
 
         def sysmax_check(price):
