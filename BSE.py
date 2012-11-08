@@ -2,6 +2,8 @@
 #
 # BSE: The Bristol Stock Exchange
 #
+# Version 1.1; November 6th, 2012. 
+#
 # Copyright (c) 2012, Dave Cliff
 #
 #
@@ -46,10 +48,10 @@
 import sys
 import random
 
-ticksize = 1
-bse_sys_minprice = 1 # minimum price in the system
-bse_sys_maxprice = 1000 # maximum price in the system
 
+bse_sys_minprice = 1    # minimum price in the system, in cents/pennies
+bse_sys_maxprice = 1000 # maximum price in the system, in cents/pennies
+ticksize = 1            # minimum change in price, in cents/pennies
 
 
 
@@ -340,7 +342,7 @@ class Trader:
 
 
         def del_order(self, order):
-                # this is lazy: assumes each trader has one order with quantity=1, so deleting sole order
+                # this is lazy: assumes each trader has only one order with quantity=1, so deleting sole order
                 # CHANGE TO DELETE THE HEAD OF THE LIST AND KEEP THE TAIL
                 self.orders = []
 
@@ -824,17 +826,20 @@ def populate_market(traders_spec, traders, shuffle, verbose):
 
 def customer_orders(time, last_update, traders, trader_stats, os, pending, verbose):
 
+
         def sysmin_check(price):
                 if price < bse_sys_minprice:
                         print('WARNING: price < bse_sys_min -- clipped')
                         price = bse_sys_minprice
                 return price
 
+
         def sysmax_check(price):
                 if price > bse_sys_maxprice:
                         print('WARNING: price > bse_sys_max -- clipped')
                         price = bse_sys_maxprice
                 return price
+        
 
         def getorderprice(i, sched, n, mode):
                 pmin = sysmin_check(min(sched[0][0], sched[0][1]))
@@ -858,30 +863,36 @@ def customer_orders(time, last_update, traders, trader_stats, os, pending, verbo
                 orderprice = sysmin_check(sysmax_check(orderprice))
                 return orderprice
 
-        def getissuetimes(n_traders, mode, interval, shuffle):
+
+        def getissuetimes(n_traders, mode, interval, shuffle, fittointerval):
+                interval = float(interval)
                 if n_traders < 1:
                         sys.exit('FAIL: n_traders < 1 in getissuetime()')
-                interval = float(interval)
-                tstep = interval / n_traders
+                elif n_traders == 1:
+                        tstep = interval
+                else:
+                        tstep = interval / (n_traders-1)
                 arrtime=0
                 issuetimes = []
                 for t in range(n_traders):
                         if mode == 'periodic':
-                                issuetimes.append(interval)
+                                arrtime=interval
                         elif mode == 'drip-fixed':
-                                issuetimes.append(t*tstep)
+                                arrtime = t*tstep
                         elif mode == 'drip-jitter':
-                                issuetimes.append(t*tstep + tstep*random.random()) 
+                                arrtime = t*tstep + tstep*random.random()
                         elif mode == 'drip-poisson':
                                 # poisson requires a bit of extra work
                                 interarrivaltime = random.expovariate(n_traders/interval)
                                 arrtime += interarrivaltime
-                                issuetimes.append(arrtime) 
                         else:
                                 sys.exit('FAIL: unknown time-mode in getissuetimes()')
-                if arrtime > (time+interval):
+                        issuetimes.append(arrtime) 
+                        
+                # at this point, arrtime is the last arrival time
+                if fittointerval and ((arrtime > interval) or (arrtime < interval)):
                         # generated sum of interarrival times longer than the interval
-                        # squish them back so that last arrival falls just before t=interval
+                        # squish them back so that last arrival falls at t=interval
                         for t in range(n_traders):
                                 issuetimes[t] = interval * (issuetimes[t] / arrtime)
                 # optionally randomly shuffle the times
@@ -893,8 +904,21 @@ def customer_orders(time, last_update, traders, trader_stats, os, pending, verbo
                                 issuetimes[i] = issuetimes[j]
                                 issuetimes[j] = tmp
                 return issuetimes
-                
-                        
+        
+
+        def getschedmode(time, os):
+                got_one = False
+                for sched in os:
+                        if (sched['from'] <= time) and (time < sched['to']) :
+                                # within the timezone for this schedule
+                                schedrange = sched['ranges']
+                                mode = sched['stepmode']
+                                got_one = True
+                                exit # jump out the loop -- so the first matching timezone has priority over any others
+                if not got_one:
+                        sys.exit('Fail: time=%5.2f not within any timezone in os=%s' % (time, os))
+                return (schedrange, mode)
+        
 
         n_buyers = trader_stats['n_buyers']
         n_sellers = trader_stats['n_sellers']
@@ -904,26 +928,27 @@ def customer_orders(time, last_update, traders, trader_stats, os, pending, verbo
 
 
         if len(pending)<1:
-                # list of pending orders is empty, so generate a new one
+                # list of pending (to-be-issued) customer orders is empty, so generate a new one
                 new_pending = []
 
-                issuetimes = getissuetimes(n_buyers, os['timemode'], os['interval'], shuffle_times)
+                # demand side (buyers)
+                issuetimes = getissuetimes(n_buyers, os['timemode'], os['interval'], shuffle_times, True)
+                
+                ordertype = 'Bid'
+                (sched, mode) = getschedmode(time, os['dem'])             
                 for t in range(n_buyers):
-                        tname = 'B%02d' % t  # demand side (a buyer)
-                        ordertype = 'Bid'
-                        sched = os['dem']['ranges']
-                        mode = os['dem']['mode']
+                        tname = 'B%02d' % t
                         orderprice = getorderprice(t, sched, n_buyers, mode)
                         issuetime = time + issuetimes[t]
                         order = Order(tname, ordertype, orderprice, 1, issuetime)
                         new_pending.append(order)
                         
-                issuetimes = getissuetimes(n_sellers, os['timemode'], os['interval'], shuffle_times)
+                # supply side (sellers)
+                issuetimes = getissuetimes(n_sellers, os['timemode'], os['interval'], shuffle_times, True)
+                ordertype = 'Ask'
+                (sched, mode) = getschedmode(time, os['sup'])
                 for t in range(n_sellers):
-                        tname = 'S%02d' % t  # supply side (a seller)
-                        ordertype = 'Ask'
-                        sched = os['sup']['ranges']
-                        mode = os['sup']['mode']
+                        tname = 'S%02d' % t
                         orderprice = getorderprice(t, sched, n_sellers, mode)
                         issuetime = time + issuetimes[t]
                         order = Order(tname, ordertype, orderprice, 1, issuetime)
@@ -944,10 +969,6 @@ def customer_orders(time, last_update, traders, trader_stats, os, pending, verbo
                                 new_pending.append(order)
 
         return new_pending
-                                
-                                
-                        
-
 
 
 
@@ -978,15 +999,7 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
         lob_verbose = False
         respond_verbose = False
 
-        pending_orders = []
-        # this is a slight kludge:
-        # if using periodic update then pre-load the pending-orders list
-        # this means first update happends at t=0 
-        # if you don't have this, have to wait for first update at t=interval 
-        if order_schedule['timemode'] == 'periodic':
-                negative_time = -1 * order_schedule['interval']
-                pending_orders = customer_orders(negative_time, last_update, traders, trader_stats,
-                                                 order_schedule, pending_orders, orders_verbose)            
+        pending_orders = []       
 
         while time < endtime:
 
@@ -1042,23 +1055,34 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
 
 if __name__ == "__main__":
 
-        supply_schedule = {'ranges':[(10,100),(100,190)], 'mode':'random'}
-        demand_schedule = {'ranges':[(10,190)], 'mode':'jittered'}
+        # set up parameters for the session
+
+        start_time = 0.0
+        end_time = 180.0
+        duration = end_time - start_time
+
+        supply_schedule = [ {'from':start_time, 'to':duration/3, 'ranges':[(10,190)], 'stepmode':'fixed'},
+                            {'from':duration/3, 'to':2*duration/3, 'ranges':[(200,300)], 'stepmode':'fixed'},
+                            {'from':2*duration/3, 'to':end_time, 'ranges':[(10,190)], 'stepmode':'fixed'}
+                          ]
+        
+        demand_schedule = supply_schedule
+
         order_sched = {'sup':supply_schedule, 'dem':demand_schedule,
                        'interval':30, 'timemode':'drip-poisson'}
 
-        buyers_spec = [('ZIP',40)]
+        buyers_spec = [('GVWY',10),('SHVR',10),('ZIC',10),('ZIP',10)]
         sellers_spec = buyers_spec
         traders_spec = {'sellers':sellers_spec, 'buyers':buyers_spec}
 
-        # this is it
+        # run a sequence of trials, one session per trial
 
         n_trials = 1
         tdump=open('avg_balance.csv','w')
         trial = 1
         while (trial<(n_trials+1)):
                 trial_id = 'trial%04d' % trial
-                market_session(trial_id, 0.0, 180, traders_spec, order_sched, tdump, False)
+                market_session(trial_id, start_time, end_time, traders_spec, order_sched, tdump, True)
                 tdump.flush()
                 trial = trial + 1
         tdump.close()
