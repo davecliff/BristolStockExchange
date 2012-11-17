@@ -2,7 +2,7 @@
 #
 # BSE: The Bristol Stock Exchange
 #
-# Version 1.1; November 6th, 2012. 
+# Version 1.2; November 17th, 2012. 
 #
 # Copyright (c) 2012, Dave Cliff
 #
@@ -46,6 +46,7 @@
 
 # could import pylab here for graphing etc
 import sys
+import math
 import random
 
 
@@ -347,7 +348,7 @@ class Trader:
                 self.orders = []
 
 
-        def bookkeep(self,trade,order):
+        def bookkeep(self,trade,order,verbose):
 
                 outstr='%s (%s) bookkeeping: orders=' % (self.tid, self.ttype)
                 for order in self.orders: outstr = outstr + str(order)
@@ -360,7 +361,7 @@ class Trader:
                 else:
                         profit = transactionprice-self.orders[0].price
                 self.balance += profit
-                print('%s profit=%d balance=%d ' % (outstr, profit, self.balance))
+                if verbose: print('%s profit=%d balance=%d ' % (outstr, profit, self.balance))
                 self.del_order(order) # delete the order
 
 
@@ -823,6 +824,15 @@ def populate_market(traders_spec, traders, shuffle, verbose):
 # if a supply or demand schedule mode is "random" and more than one range is supplied in ranges[],
 # then each time a price is generated one of the ranges is chosen equiprobably and
 # the price is then generated uniform-randomly from that range
+#
+# if len(range)==2, interpreted as min and max values on the schedule, specifying linear supply/demand curve
+# if len(range)==3, first two vals are min & max, third value should be a function that generates a dynamic price offset
+#                   -- the offset value applies equally to the min & max, so gradient of linear sup/dem curve doesn't vary
+# if len(range)==4, the third value is function that gives dynamic offset for schedule min,
+#                   and fourth is a function giving dynamic offset for schedule max, so gradient of sup/dem linear curve can vary
+#
+# the interface on this is a bit of a mess... could do with refactoring
+
 
 def customer_orders(time, last_update, traders, trader_stats, os, pending, verbose):
 
@@ -839,16 +849,39 @@ def customer_orders(time, last_update, traders, trader_stats, os, pending, verbo
                         print('WARNING: price > bse_sys_max -- clipped')
                         price = bse_sys_maxprice
                 return price
+
         
 
-        def getorderprice(i, sched, n, mode):
-                pmin = sysmin_check(min(sched[0][0], sched[0][1]))
-                pmax = sysmax_check(max(sched[0][0], sched[0][1]))
+        def getorderprice(i, sched, n, mode, issuetime):
+                # does the first schedule range include optional dynamic offset function(s)?
+                if len(sched[0])>2:
+                        offsetfn = sched[0][2]
+                        if callable(offsetfn):
+                                # same offset for min and max
+                                offset_min = offsetfn(issuetime)
+                                offset_max = offset_min
+                        else:
+                                sys.exit('FAIL: 3rd argument of sched in getorderprice() not callable')
+                        if len(sched[0])>3:
+                                # if second offset function is specfied, that applies only to the max value
+                                offsetfn = sched[0][3]
+                                if callable(offsetfn):
+                                        # this function applies to max
+                                        offset_max = offsetfn(issuetime)
+                                else:
+                                        sys.exit('FAIL: 4th argument of sched in getorderprice() not callable')
+                else:
+                        offset_min = 0.0
+                        offset_max = 0.0
+
+                pmin = sysmin_check(offset_min + min(sched[0][0], sched[0][1]))
+                pmax = sysmax_check(offset_max + max(sched[0][0], sched[0][1]))
                 prange = pmax-pmin
                 stepsize = prange/(n-1)
                 halfstep = round(stepsize/2.0)
+
                 if mode == 'fixed':
-                        orderprice = pmin + int(i*stepsize)
+                        orderprice = pmin + int(i*stepsize) 
                 elif mode == 'jittered':
                         orderprice = pmin + int(i*stepsize) + random.randint(-halfstep,halfstep)
                 elif mode == 'random':
@@ -862,6 +895,7 @@ def customer_orders(time, last_update, traders, trader_stats, os, pending, verbo
                         sys.exit('FAIL: Unknown mode in schedule')
                 orderprice = sysmin_check(sysmax_check(orderprice))
                 return orderprice
+
 
 
         def getissuetimes(n_traders, mode, interval, shuffle, fittointerval):
@@ -937,9 +971,9 @@ def customer_orders(time, last_update, traders, trader_stats, os, pending, verbo
                 ordertype = 'Bid'
                 (sched, mode) = getschedmode(time, os['dem'])             
                 for t in range(n_buyers):
-                        tname = 'B%02d' % t
-                        orderprice = getorderprice(t, sched, n_buyers, mode)
                         issuetime = time + issuetimes[t]
+                        tname = 'B%02d' % t
+                        orderprice = getorderprice(t, sched, n_buyers, mode, issuetime)
                         order = Order(tname, ordertype, orderprice, 1, issuetime)
                         new_pending.append(order)
                         
@@ -948,9 +982,9 @@ def customer_orders(time, last_update, traders, trader_stats, os, pending, verbo
                 ordertype = 'Ask'
                 (sched, mode) = getschedmode(time, os['sup'])
                 for t in range(n_sellers):
-                        tname = 'S%02d' % t
-                        orderprice = getorderprice(t, sched, n_sellers, mode)
                         issuetime = time + issuetimes[t]
+                        tname = 'S%02d' % t
+                        orderprice = getorderprice(t, sched, n_sellers, mode, issuetime)
                         order = Order(tname, ordertype, orderprice, 1, issuetime)
                         new_pending.append(order)
         else:
@@ -997,7 +1031,9 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
 
         orders_verbose = False
         lob_verbose = False
+        process_verbose = False
         respond_verbose = False
+        bookkeep_verbose = False
 
         pending_orders = []       
 
@@ -1020,12 +1056,12 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
 
                 if order != None:
                         # send order to exchange
-                        trade = exchange.process_order2(time, order, True)
+                        trade = exchange.process_order2(time, order, process_verbose)
                         if trade != None:
                                 # trade occurred,
                                 # so the counterparties update order lists and blotters
-                                traders[trade['party1']].bookkeep(trade, order)
-                                traders[trade['party2']].bookkeep(trade, order)
+                                traders[trade['party1']].bookkeep(trade, order, bookkeep_verbose)
+                                traders[trade['party2']].bookkeep(trade, order, bookkeep_verbose)
                                 if dump_each_trade: trade_stats(sess_id, traders, tdump, time, exchange.publish_lob(time, lob_verbose))
 
                         # traders respond to whatever happened
@@ -1058,32 +1094,111 @@ if __name__ == "__main__":
         # set up parameters for the session
 
         start_time = 0.0
-        end_time = 180.0
+        end_time = 600.0
         duration = end_time - start_time
 
-        supply_schedule = [ {'from':start_time, 'to':duration/3, 'ranges':[(10,190)], 'stepmode':'fixed'},
-                            {'from':duration/3, 'to':2*duration/3, 'ranges':[(200,300)], 'stepmode':'fixed'},
-                            {'from':2*duration/3, 'to':end_time, 'ranges':[(10,190)], 'stepmode':'fixed'}
+
+        # schedule_offsetfn returns time-dependent offset on schedule prices
+        def schedule_offsetfn(t):
+                pi2 = math.pi * 2
+                c = math.pi*3000
+                wavelength = t/c
+                gradient = 100*t/(c/pi2)
+                amplitude = 100*t/(c/pi2)
+                offset = gradient + amplitude * math.sin(wavelength*t)
+                return int(round(offset,0))
+                
+                
+
+##        range1 = (10, 190, schedule_offsetfn)
+##        range2 = (200,300, schedule_offsetfn)
+
+##        supply_schedule = [ {'from':start_time, 'to':duration/3, 'ranges':[range1], 'stepmode':'fixed'},
+##                            {'from':duration/3, 'to':2*duration/3, 'ranges':[range2], 'stepmode':'fixed'},
+##                            {'from':2*duration/3, 'to':end_time, 'ranges':[range1], 'stepmode':'fixed'}
+##                          ]
+
+
+
+        range1 = (95, 95, schedule_offsetfn)
+        supply_schedule = [ {'from':start_time, 'to':end_time, 'ranges':[range1], 'stepmode':'fixed'}
                           ]
-        
-        demand_schedule = supply_schedule
+
+        range1 = (105, 105, schedule_offsetfn)
+        demand_schedule = [ {'from':start_time, 'to':end_time, 'ranges':[range1], 'stepmode':'fixed'}
+                          ]
 
         order_sched = {'sup':supply_schedule, 'dem':demand_schedule,
                        'interval':30, 'timemode':'drip-poisson'}
 
-        buyers_spec = [('GVWY',10),('SHVR',10),('ZIC',10),('ZIP',10)]
-        sellers_spec = buyers_spec
-        traders_spec = {'sellers':sellers_spec, 'buyers':buyers_spec}
+##        buyers_spec = [('GVWY',10),('SHVR',10),('ZIC',10),('ZIP',10)]
+##        sellers_spec = buyers_spec
+##        traders_spec = {'sellers':sellers_spec, 'buyers':buyers_spec}
+##
+##        # run a sequence of trials, one session per trial
+##
+##        n_trials = 1
+##        tdump=open('avg_balance.csv','w')
+##        trial = 1
+##        if n_trials > 1:
+##                dump_all = False
+##        else:
+##                dump_all = True
+##                
+##        while (trial<(n_trials+1)):
+##                trial_id = 'trial%04d' % trial
+##                market_session(trial_id, start_time, end_time, traders_spec, order_sched, tdump, dump_all)
+##                tdump.flush()
+##                trial = trial + 1
+##        tdump.close()
+##
+##        sys.exit('Done Now')
 
-        # run a sequence of trials, one session per trial
+        
 
-        n_trials = 1
-        tdump=open('avg_balance.csv','w')
-        trial = 1
-        while (trial<(n_trials+1)):
-                trial_id = 'trial%04d' % trial
-                market_session(trial_id, start_time, end_time, traders_spec, order_sched, tdump, True)
-                tdump.flush()
-                trial = trial + 1
+        # run a sequence of trials that exhaustively varies the ratio of four trader types
+        # NB this has weakness of symmetric proportions on buyers/sellers -- combinatorics of varying that are quite nasty
+        
+
+        n_trader_types = 4
+        equal_ratio_n = 4
+        n_trials_per_ratio = 50
+
+        n_traders = n_trader_types*equal_ratio_n
+
+        fname = 'balances_%03d.csv' % equal_ratio_n
+
+        tdump=open(fname,'w')
+
+        min_n = 1
+
+        trialnumber = 1
+        trdr_1_n = min_n
+        while trdr_1_n <= n_traders:
+                trdr_2_n = min_n 
+                while trdr_2_n <= n_traders - trdr_1_n:
+                        trdr_3_n = min_n
+                        while trdr_3_n <= n_traders - (trdr_1_n + trdr_2_n):
+                                trdr_4_n = n_traders - (trdr_1_n + trdr_2_n + trdr_3_n)
+                                if trdr_4_n >= min_n:
+                                        buyers_spec = [('GVWY',trdr_1_n),('SHVR',trdr_2_n),
+                                                       ('ZIC',trdr_3_n),('ZIP',trdr_4_n)]
+                                        sellers_spec = buyers_spec
+                                        traders_spec = {'sellers':sellers_spec, 'buyers':buyers_spec}
+                                        print buyers_spec
+                                        trial = 1
+                                        while trial <= n_trials_per_ratio:
+                                                trial_id = 'trial%07d' % trialnumber
+                                                market_session(trial_id, start_time, end_time, traders_spec,
+                                                               order_sched, tdump, False)
+                                                tdump.flush()
+                                                trial = trial + 1
+                                                trialnumber = trialnumber + 1
+                                trdr_3_n += 1
+                        trdr_2_n += 1
+                trdr_1_n += 1
         tdump.close()
+        
+        print trialnumber
+
 
