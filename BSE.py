@@ -630,7 +630,7 @@ class Trader_ZIP(Trader):
                                 ask_lifted = True
                 elif self.prev_best_ask_p != None:
                         # the bid LOB is empty now but was not previously, so must have been hit
-                                ask_hit = True
+                                ask_lifted = True
 
 
                 if verbose and (bid_improved or bid_hit or ask_improved or ask_lifted):
