@@ -47,7 +47,9 @@
 # could import pylab here for graphing etc
 import itertools
 import math
+from multiprocessing import Pool
 import random
+import StringIO
 import sys
 
 
@@ -1075,13 +1077,17 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
 
 
         # end of an experiment -- dump the tape
-        exchange.tape_dump('transactions.csv', 'w', 'keep')
+        # TODO: Does not work with more than one thread!
+        #exchange.tape_dump('transactions.csv', 'w', 'keep')
 
 
         # write trade_stats for this experiment NB end-of-session summary only
         trade_stats(sess_id, traders, dumpfile, time, exchange.publish_lob(time, lob_verbose))
 
-def run_trials(n_trials_per_ratio, trialnumber, trader_nums, tdump):
+def run_trials(args):
+        n_trials_per_ratio, trialnumber, trader_nums = args
+
+        tdump = StringIO.StringIO()
         buyers_spec = zip(trader_types.keys(), trader_nums)
         sellers_spec = buyers_spec
         traders_spec = {'sellers':sellers_spec, 'buyers':buyers_spec}
@@ -1091,8 +1097,8 @@ def run_trials(n_trials_per_ratio, trialnumber, trader_nums, tdump):
                 trial_id = 'trial%07d' % trialnumber
                 market_session(trial_id, start_time, end_time, traders_spec,
                                order_sched, tdump, False)
-                tdump.flush()
                 trial = trial + 1
+        return tdump
 
 #############################
 
@@ -1184,7 +1190,20 @@ if __name__ == "__main__":
 
         trader_permutations = itertools.product(range(min_n, n_traders - n_trader_types + 2), repeat=n_trader_types)
         valid_permutations = itertools.ifilter((lambda x: sum(x) == n_traders), trader_permutations)
+        # We need to pass n_trials_per_ratio and the trialnumber into run_trials
+        perms_with_args = itertools.imap((lambda x: (n_trials_per_ratio, ) + x), enumerate(valid_permutations))
 
-        for trialnumber, trader_nums in valid_permutations:
-                run_trials(n_trials_per_ratio, trialnumber, trader_nums, tdump)
+        print "Starting parallel pool..."
+        # Specify the number of threads with: pool = Pool(processes=3)
+        pool = Pool()
+        results = pool.imap(run_trials, perms_with_args)
+        pool.close()
+
+        print "Waiting for parallel pool to finish and outputting results..."
+        for stream in results:
+                tdump.write(stream.getvalue())
+                stream.close()
+
+        print "Waiting for everything to finish..."
         tdump.close()
+        pool.join()
