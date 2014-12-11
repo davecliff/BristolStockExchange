@@ -1015,7 +1015,7 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
 
         # create a bunch of traders
         traders = {}
-        trader_stats = populate_market(trader_spec, traders, True, True)
+        trader_stats = populate_market(trader_spec, traders, True, False)
 
 
         # timestep set so that can process all traders in one second
