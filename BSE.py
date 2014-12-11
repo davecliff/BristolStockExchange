@@ -45,9 +45,10 @@
 
 
 # could import pylab here for graphing etc
-import sys
+import itertools
 import math
 import random
+import sys
 
 
 bse_sys_minprice = 1  # minimum price in the system, in cents/pennies
@@ -1158,7 +1159,7 @@ if __name__ == "__main__":
         # NB this has weakness of symmetric proportions on buyers/sellers -- combinatorics of varying that are quite nasty
         
 
-        n_trader_types = 4
+        n_trader_types = len(trader_types.keys())
         equal_ratio_n = 4
         n_trials_per_ratio = 50
 
@@ -1170,33 +1171,19 @@ if __name__ == "__main__":
 
         min_n = 1
 
-        trialnumber = 1
-        trdr_1_n = min_n
-        while trdr_1_n <= n_traders:
-                trdr_2_n = min_n 
-                while trdr_2_n <= n_traders - trdr_1_n:
-                        trdr_3_n = min_n
-                        while trdr_3_n <= n_traders - (trdr_1_n + trdr_2_n):
-                                trdr_4_n = n_traders - (trdr_1_n + trdr_2_n + trdr_3_n)
-                                if trdr_4_n >= min_n:
-                                        buyers_spec = [('GVWY', trdr_1_n), ('SHVR', trdr_2_n),
-                                                       ('ZIC', trdr_3_n), ('ZIP', trdr_4_n)]
-                                        sellers_spec = buyers_spec
-                                        traders_spec = {'sellers':sellers_spec, 'buyers':buyers_spec}
-                                        print buyers_spec
-                                        trial = 1
-                                        while trial <= n_trials_per_ratio:
-                                                trial_id = 'trial%07d' % trialnumber
-                                                market_session(trial_id, start_time, end_time, traders_spec,
-                                                               order_sched, tdump, False)
-                                                tdump.flush()
-                                                trial = trial + 1
-                                                trialnumber = trialnumber + 1
-                                trdr_3_n += 1
-                        trdr_2_n += 1
-                trdr_1_n += 1
+        trader_permutations = itertools.product(range(min_n, n_traders - n_trader_types + 2), repeat=n_trader_types)
+        valid_permutations = itertools.ifilter((lambda x: sum(x) == n_traders), trader_permutations)
+
+        for trialnumber, trader_nums in valid_permutations:
+                buyers_spec = zip(trader_types.keys(), trader_nums)
+                sellers_spec = buyers_spec
+                traders_spec = {'sellers':sellers_spec, 'buyers':buyers_spec}
+                print buyers_spec
+                trial = 1
+                while trial <= n_trials_per_ratio:
+                        trial_id = 'trial%07d' % trialnumber
+                        market_session(trial_id, start_time, end_time, traders_spec,
+                                       order_sched, tdump, False)
+                        tdump.flush()
+                        trial = trial + 1
         tdump.close()
-        
-        print trialnumber
-
-
