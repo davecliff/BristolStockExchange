@@ -689,7 +689,13 @@ class Trader_ZIP(Trader):
                 self.prev_best_ask_q = lob_best_ask_q
 
 
-
+trader_types = {
+                'GVWY' : Trader_Giveaway,
+                'ZIC' : Trader_ZIC,
+                'SHVR' : Trader_Shaver,
+                'SNPR' : Trader_Sniper,
+                'ZIP' : Trader_ZIP
+                }
 
 ##########################---trader-types have all been defined now--################
 
@@ -746,17 +752,9 @@ def trade_stats(expid, traders, dumpfile, time, lob):
 def populate_market(traders_spec, traders, shuffle, verbose):
 
         def trader_type(robottype, name):
-                if robottype == 'GVWY':
-                        return Trader_Giveaway('GVWY', name, 0.00)
-                elif robottype == 'ZIC':
-                        return Trader_ZIC('ZIC', name, 0.00)
-                elif robottype == 'SHVR':
-                        return Trader_Shaver('SHVR', name, 0.00)
-                elif robottype == 'SNPR':
-                        return Trader_Sniper('SNPR', name, 0.00)
-                elif robottype == 'ZIP':
-                        return Trader_ZIP('ZIP', name, 0.00)
-                else:
+                try:
+                        return trader_types[robottype](robottype, name, 0.00)
+                except KeyError:
                         sys.exit('FATAL: don\'t know robot type %s\n' % robottype)
 
 
