@@ -1081,7 +1081,18 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
         # write trade_stats for this experiment NB end-of-session summary only
         trade_stats(sess_id, traders, tdump, time, exchange.publish_lob(time, lob_verbose))
 
-
+def run_trials(n_trials_per_ratio, trialnumber, trader_nums, tdump):
+        buyers_spec = zip(trader_types.keys(), trader_nums)
+        sellers_spec = buyers_spec
+        traders_spec = {'sellers':sellers_spec, 'buyers':buyers_spec}
+        print buyers_spec
+        trial = 1
+        while trial <= n_trials_per_ratio:
+                trial_id = 'trial%07d' % trialnumber
+                market_session(trial_id, start_time, end_time, traders_spec,
+                               order_sched, tdump, False)
+                tdump.flush()
+                trial = trial + 1
 
 #############################
 
@@ -1175,15 +1186,5 @@ if __name__ == "__main__":
         valid_permutations = itertools.ifilter((lambda x: sum(x) == n_traders), trader_permutations)
 
         for trialnumber, trader_nums in valid_permutations:
-                buyers_spec = zip(trader_types.keys(), trader_nums)
-                sellers_spec = buyers_spec
-                traders_spec = {'sellers':sellers_spec, 'buyers':buyers_spec}
-                print buyers_spec
-                trial = 1
-                while trial <= n_trials_per_ratio:
-                        trial_id = 'trial%07d' % trialnumber
-                        market_session(trial_id, start_time, end_time, traders_spec,
-                                       order_sched, tdump, False)
-                        tdump.flush()
-                        trial = trial + 1
+                run_trials(n_trials_per_ratio, trialnumber, trader_nums, tdump)
         tdump.close()
