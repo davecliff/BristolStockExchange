@@ -1061,7 +1061,7 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
                                 # so the counterparties update order lists and blotters
                                 traders[trade['party1']].bookkeep(trade, order, bookkeep_verbose)
                                 traders[trade['party2']].bookkeep(trade, order, bookkeep_verbose)
-                                if dump_each_trade: trade_stats(sess_id, traders, tdump, time, exchange.publish_lob(time, lob_verbose))
+                                if dump_each_trade: trade_stats(sess_id, traders, dumpfile, time, exchange.publish_lob(time, lob_verbose))
 
                         # traders respond to whatever happened
                         lob = exchange.publish_lob(time, lob_verbose)
@@ -1079,7 +1079,7 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
 
 
         # write trade_stats for this experiment NB end-of-session summary only
-        trade_stats(sess_id, traders, tdump, time, exchange.publish_lob(time, lob_verbose))
+        trade_stats(sess_id, traders, dumpfile, time, exchange.publish_lob(time, lob_verbose))
 
 def run_trials(n_trials_per_ratio, trialnumber, trader_nums, tdump):
         buyers_spec = zip(trader_types.keys(), trader_nums)
