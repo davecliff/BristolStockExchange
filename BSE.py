@@ -165,8 +165,11 @@ class Orderbook_half:
                         del(self.orders[best_price_counterparty])
                         self.n_orders = self.n_orders - 1
                         if self.n_orders > 0:
+                            if self.booktype == 'Bid':
+                                self.best_price = max(self.lob.keys())
+                            else:
                                 self.best_price = min(self.lob.keys())
-                                self.lob_depth = len(self.lob.keys())
+                            self.lob_depth = len(self.lob.keys())
                         else:
                                 self.best_price = self.worstprice
                                 self.lob_depth = 0
