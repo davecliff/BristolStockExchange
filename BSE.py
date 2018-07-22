@@ -2,9 +2,10 @@
 #
 # BSE: The Bristol Stock Exchange
 #
+# Version 1.3; July 21st, 2018.
 # Version 1.2; November 17th, 2012. 
 #
-# Copyright (c) 2012, Dave Cliff
+# Copyright (c) 2012-2018, Dave Cliff
 #
 #
 # ------------------------
@@ -36,11 +37,11 @@
 #       (a) only one financial instrument being traded
 #       (b) traders can only trade contracts of size 1 (will add variable quantities later)
 #       (c) each trader can have max of one order per single orderbook.
-#       (d) traders can replace/overwrite earlier orders, but cannot cancel
+#       (d) traders can replace/overwrite earlier orders, and/or can cancel
 #       (d) simply processes each order in sequence and republishes LOB to all traders
 #           => no issues with exchange processing latency/delays or simultaneously issued orders.
 #
-# NB this code has been written to be readable, not efficient!
+# NB this code has been written to be readable/intelligible, not efficient!
 
 
 
@@ -48,7 +49,8 @@
 import sys
 import math
 import random
-
+from operator import itemgetter, attrgetter, methodcaller
+import bse_test
 
 bse_sys_minprice = 1  # minimum price in the system, in cents/pennies
 bse_sys_maxprice = 1000  # maximum price in the system, in cents/pennies
@@ -56,18 +58,20 @@ ticksize = 1  # minimum change in price, in cents/pennies
 
 
 
-# an Order has a trader id, a type (buy/sell) price, quantity, and time it was issued
+# an Order/quote has a trader id, a type (buy/sell) price, quantity, timestamp, and unique i.d.
 class Order:
 
-        def __init__(self, tid, otype, price, qty, time):
-                self.tid = tid
-                self.otype = otype
-                self.price = price
-                self.qty = qty
-                self.time = time
+        def __init__(self, tid, otype, price, qty, time, qid):
+                self.tid = tid      # trader i.d.
+                self.otype = otype  # order type
+                self.price = price  # price
+                self.qty = qty      # quantity
+                self.time = time    # timestamp
+                self.qid = qid      # quote i.d. (unique to each quote)
 
         def __str__(self):
-                return '[%s %s P=%03d Q=%s T=%5.2f]' % (self.tid, self.otype, self.price, self.qty, self.time)
+                return '[%s %s P=%03d Q=%s T=%5.2f QID:%d]' % \
+                       (self.tid, self.otype, self.price, self.qty, self.time, self.qid)
 
 
 
@@ -102,6 +106,7 @@ class Orderbook_half:
 
 
         def build_lob(self):
+                lob_verbose = False
                 # take a list of orders and build a limit-order-book (lob) from it
                 # NB the exchange needs to know arrival times and trader-id associated with each order
                 # returns lob as a dictionary (i.e., unsorted)
@@ -114,11 +119,11 @@ class Orderbook_half:
                                 # update existing entry
                                 qty = self.lob[price][0]
                                 orderlist = self.lob[price][1]
-                                orderlist.append([order.time, order.qty, order.tid])
+                                orderlist.append([order.time, order.qty, order.tid, order.qid])
                                 self.lob[price] = [qty + order.qty, orderlist]
                         else:
                                 # create a new dictionary entry
-                                self.lob[price] = [order.qty, [[order.time, order.qty, order.tid]]]
+                                self.lob[price] = [order.qty, [[order.time, order.qty, order.tid, order.qid]]]
                 # create anonymized version
                 self.anonymize_lob()
                 # record best price and associated trader-id
@@ -132,25 +137,38 @@ class Orderbook_half:
                         self.best_price = None
                         self.best_tid = None
 
+                if lob_verbose : print self.lob
+
 
         def book_add(self, order):
                 # add order to the dictionary holding the list of orders
                 # either overwrites old order from this trader
                 # or dynamically creates new entry in the dictionary
                 # so, max of one order per trader per list
+                # checks whether length or order list has changed, to distinguish addition/overwrite
+                #print('book_add > %s %s' % (order, self.orders))
+                n_orders = self.n_orders
                 self.orders[order.tid] = order
                 self.n_orders = len(self.orders)
                 self.build_lob()
+                #print('book_add < %s %s' % (order, self.orders))
+                if n_orders != self.n_orders :
+                    return('Addition')
+                else:
+                    return('Overwrite')
+
 
 
         def book_del(self, order):
-                # delete order to the dictionary holding the orders
+                # delete order from the dictionary holding the orders
                 # assumes max of one order per trader per list
                 # checks that the Trader ID does actually exist in the dict before deletion
+                # print('book_del %s',self.orders)
                 if self.orders.get(order.tid) != None :
                         del(self.orders[order.tid])
                         self.n_orders = len(self.orders)
                         self.build_lob()
+                # print('book_del %s', self.orders)
 
 
         def delete_best(self):
@@ -165,11 +183,11 @@ class Orderbook_half:
                         del(self.orders[best_price_counterparty])
                         self.n_orders = self.n_orders - 1
                         if self.n_orders > 0:
-                            if self.booktype == 'Bid':
-                                self.best_price = max(self.lob.keys())
-                            else:
-                                self.best_price = min(self.lob.keys())
-                            self.lob_depth = len(self.lob.keys())
+                                if self.booktype == 'Bid':
+                                        self.best_price = max(self.lob.keys())
+                                else:
+                                        self.best_price = min(self.lob.keys())
+                                self.lob_depth = len(self.lob.keys())
                         else:
                                 self.best_price = self.worstprice
                                 self.lob_depth = 0
@@ -194,6 +212,7 @@ class Orderbook(Orderbook_half):
                 self.bids = Orderbook_half('Bid', bse_sys_minprice)
                 self.asks = Orderbook_half('Ask', bse_sys_maxprice)
                 self.tape = []
+                self.quote_id = 0  #unique ID code for each quote accepted onto the book
 
 
 
@@ -201,44 +220,72 @@ class Orderbook(Orderbook_half):
 
 class Exchange(Orderbook):
 
-        def add_order(self, order):
-                # add an order to the exchange and update all internal records
+        def add_order(self, order, verbose):
+                # add a quote/order to the exchange and update all internal records; return unique i.d.
+                order.qid = self.quote_id
+                self.quote_id = order.qid + 1
+                # if verbose : print('QUID: order.quid=%d self.quote.id=%d' % (order.qid, self.quote_id))
                 tid = order.tid
                 if order.otype == 'Bid':
-                        self.bids.book_add(order)
-                else:
-                        self.asks.book_add(order)
-
-
-        def del_order(self, order):
-                # delete an order from the exchange, update all internal records
-                tid = order.tid
-                if order.otype == 'Bid':
-                        self.bids.book_del(order)
+                        response=self.bids.book_add(order)
                         best_price = self.bids.lob_anon[-1][0]
                         self.bids.best_price = best_price
                         self.bids.best_tid = self.bids.lob[best_price][1][0][2]
                 else:
-                        self.asks.book_del(order)
+                        response=self.asks.book_add(order)
                         best_price = self.asks.lob_anon[0][0]
                         self.asks.best_price = best_price
                         self.asks.best_tid = self.asks.lob[best_price][1][0][2]
+                return [order.qid, response]
+
+
+        def del_order(self, order, verbose):
+                # delete a trader's quot/order from the exchange, update all internal records
+                tid = order.tid
+                if order.otype == 'Bid':
+                        self.bids.book_del(order)
+                        if self.bids.n_orders > 0 :
+                                best_price = self.bids.lob_anon[-1][0]
+                                self.bids.best_price = best_price
+                                self.bids.best_tid = self.bids.lob[best_price][1][0][2]
+                        else: # this side of book is empty
+                                self.bids.best_price = None
+                                self.bids.best_tid = None
+                        #self.tape.append(['Cancel', order])
+                elif order.otype == 'Ask':
+                        self.asks.book_del(order)
+                        if self.asks.n_orders > 0 :
+                                best_price = self.asks.lob_anon[0][0]
+                                self.asks.best_price = best_price
+                                self.asks.best_tid = self.asks.lob[best_price][1][0][2]
+                        else: # this side of book is empty
+                                self.asks.best_price = None
+                                self.asks.best_tid = None
+                        #self.tape.append(['Cancel', order])
+                else:
+                        # neither bid nor ask?
+                        sys.exit('bad order type in del_quote()')
+
 
 
         def process_order2(self, time, order, verbose):
                 # receive an order and either add it to the relevant LOB (ie treat as limit order)
-                # or if it crosses the best counterparty offer, execute (treat as a market order)
+                # or if it crosses the best counterparty offer, execute it (treat as a market order)
                 oprice = order.price
                 counterparty = None
-                self.add_order(order)  # add it to the order lists -- overwriting any previous order
+                [qid, response] = self.add_order(order, verbose)  # add it to the order lists -- overwriting any previous order
+                order.qid = qid
+                if verbose :
+                        print('QUID: order.quid=%d' % order.qid)
+                        print('RESPONSE: %s' % response)
                 best_ask = self.asks.best_price
                 best_ask_tid = self.asks.best_tid
                 best_bid = self.bids.best_price
                 best_bid_tid = self.bids.best_tid
                 if order.otype == 'Bid':
                         if self.asks.n_orders > 0 and best_bid >= best_ask:
-                                # bid hits the best ask
-                                if verbose: print("Bid hits best ask")
+                                # bid lifts the best ask
+                                if verbose: print("Bid $%s lifts best ask" % oprice)
                                 counterparty = best_ask_tid
                                 price = best_ask  # bid crossed ask, so use ask price
                                 if verbose: print('counterparty, price', counterparty, price)
@@ -249,7 +296,7 @@ class Exchange(Orderbook):
                 elif order.otype == 'Ask':
                         if self.bids.n_orders > 0 and best_ask <= best_bid:
                                 # ask hits the best bid
-                                if verbose: print("Ask hits best bid")
+                                if verbose: print("Ask $%s hits best bid" % oprice)
                                 # remove the best bid
                                 counterparty = best_bid_tid
                                 price = best_bid  # ask crossed bid, so use bid price
@@ -263,6 +310,7 @@ class Exchange(Orderbook):
                         sys.exit('process_order() given neither Bid nor Ask')
                 # NB at this point we have deleted the order from the exchange's records
                 # but the two traders concerned still have to be notified
+                if verbose: print('counterparty %s' % counterparty)
                 if counterparty != None:
                         # process the trade
                         if verbose: print('>>>>>>>>>>>>>>>>>TRADE t=%5.2f $%d %s %s' % (time, price, counterparty, order.tid))
@@ -300,10 +348,14 @@ class Exchange(Orderbook):
                                      'worst':self.asks.worstprice,
                                      'n': self.asks.n_orders,
                                      'lob':self.asks.lob_anon}
+                public_data['QID'] = self.quote_id
                 if verbose:
                         print('publish_lob: t=%d' % time)
                         print('BID_lob=%s' % public_data['bids']['lob'])
+                        # print('best=%s; worst=%s; n=%s ' % (self.bids.best_price, self.bids.worstprice, self.bids.n_orders))
                         print('ASK_lob=%s' % public_data['asks']['lob'])
+                        # print('qid=%d' % self.quote_id)
+
                 return public_data
 
 
@@ -318,36 +370,49 @@ class Exchange(Orderbook):
 # all Traders have a trader id, bank balance, blotter, and list of orders to execute
 class Trader:
 
-        def __init__(self, ttype, tid, balance):
-                self.ttype = ttype
-                self.tid = tid
-                self.balance = balance
-                self.blotter = []
-                self.orders = []
-                self.willing = 1
-                self.able = 1
-                self.lastquote = None
+        def __init__(self, ttype, tid, balance, time):
+                self.ttype = ttype      # what type / strategy this trader is
+                self.tid = tid          # trader unique ID code
+                self.balance = balance  # money in the bank
+                self.blotter = []       # record of trades executed
+                self.orders = []        # customer orders currently being worked (fixed at 1)
+                self.n_quotes = 0       # number of quotes live on LOB
+                self.willing = 1        # used in ZIP etc
+                self.able = 1           # used in ZIP etc
+                self.birthtime = time   # used when calculating age of a trader/strategy
+                self.profitpertime = 0  # profit per unit time
+                self.n_trades = 0       # how many trades has this trader done?
+                self.lastquote = None   # record of what its last quote was
 
 
         def __str__(self):
-                return '[TID %s type %s balance %s blotter %s orders %s]' % (self.tid, self.ttype, self.balance, self.blotter, self.orders)
+                return '[TID %s type %s balance %s blotter %s orders %s n_trades %s profitpertime %s]' \
+                       % (self.tid, self.ttype, self.balance, self.blotter, self.orders, self.n_trades, self.profitpertime)
 
 
-        def add_order(self, order):
+        def add_order(self, order, verbose):
                 # in this version, trader has at most one order,
                 # if allow more than one, this needs to be self.orders.append(order)
+                if self.n_quotes > 0 :
+                    # this trader has a live quote on the LOB, from a previous customer order
+                    # need response to signal cancellation/withdrawal of that quote
+                    response = 'LOB_Cancel'
+                else:
+                    response = 'Proceed'
                 self.orders = [order]
+                if verbose : print('add_order < response=%s' % response)
+                return response
 
 
         def del_order(self, order):
-                # this is lazy: assumes each trader has only one order with quantity=1, so deleting sole order
+                # this is lazy: assumes each trader has only one customer order with quantity=1, so deleting sole order
                 # CHANGE TO DELETE THE HEAD OF THE LIST AND KEEP THE TAIL
                 self.orders = []
 
 
-        def bookkeep(self, trade, order, verbose):
+        def bookkeep(self, trade, order, verbose, time):
 
-                outstr = '%s (%s) bookkeeping: orders=' % (self.tid, self.ttype)
+                outstr=""
                 for order in self.orders: outstr = outstr + str(order)
 
                 self.blotter.append(trade)  # add trade record to trader's blotter
@@ -358,15 +423,28 @@ class Trader:
                 else:
                         profit = transactionprice - self.orders[0].price
                 self.balance += profit
-                if verbose: print('%s profit=%d balance=%d ' % (outstr, profit, self.balance))
+                self.n_trades += 1
+                self.profitpertime = self.balance/(time - self.birthtime)
+
+                if profit < 0 :
+                        print profit
+                        print trade
+                        print order
+                        sys.exit()
+
+                if verbose: print('%s profit=%d balance=%d profit/time=%d' % (outstr, profit, self.balance, self.profitpertime))
                 self.del_order(order)  # delete the order
 
 
         # specify how trader responds to events in the market
-        # this is a null action, expect it to be overloaded with clever things by specific algos
+        # this is a null action, expect it to be overloaded by specific algos
         def respond(self, time, lob, trade, verbose):
                 return None
 
+        # specify how trader mutates its parameter values
+        # this is a null action, expect it to be overloaded by specific algos
+        def mutate(self, time, lob, trade, verbose):
+                return None
 
 
 
@@ -380,12 +458,12 @@ class Trader_Giveaway(Trader):
                         order = None
                 else:
                         quoteprice = self.orders[0].price
-                        self.lastquote = quoteprice
                         order = Order(self.tid,
                                     self.orders[0].otype,
                                     quoteprice,
                                     self.orders[0].qty,
-                                    time)
+                                    time, lob['QID'])
+                        self.lastquote=order
                 return order
 
 
@@ -401,6 +479,7 @@ class Trader_ZIC(Trader):
                 else:
                         minprice = lob['bids']['worst']
                         maxprice = lob['asks']['worst']
+                        qid = lob['QID']
                         limit = self.orders[0].price
                         otype = self.orders[0].otype
                         if otype == 'Bid':
@@ -408,8 +487,8 @@ class Trader_ZIC(Trader):
                         else:
                                 quoteprice = random.randint(limit, maxprice)
                                 # NB should check it == 'Ask' and barf if not
-                        order = Order(self.tid, otype, quoteprice, self.orders[0].qty, time)
-
+                        order = Order(self.tid, otype, quoteprice, self.orders[0].qty, time, qid)
+                        self.lastquote = order
                 return order
 
 
@@ -438,9 +517,8 @@ class Trader_Shaver(Trader):
                                                 quoteprice = limitprice
                                 else:
                                         quoteprice = lob['asks']['worst']
-                        self.lastquote = quoteprice
-                        order = Order(self.tid, otype, quoteprice, self.orders[0].qty, time)
-
+                        order = Order(self.tid, otype, quoteprice, self.orders[0].qty, time, lob['QID'])
+                        self.lastquote = order
                 return order
 
 
@@ -474,9 +552,8 @@ class Trader_Sniper(Trader):
                                                 quoteprice = limitprice
                                 else:
                                         quoteprice = lob['asks']['worst']
-                        self.lastquote = quoteprice
-                        order = Order(self.tid, otype, quoteprice, self.orders[0].qty, time)
-
+                        order = Order(self.tid, otype, quoteprice, self.orders[0].qty, time, lob['QID'])
+                        self.lastquote = order
                 return order
 
 
@@ -487,16 +564,21 @@ class Trader_Sniper(Trader):
 class Trader_ZIP(Trader):
 
         # ZIP init key param-values are those used in Cliff's 1997 original HP Labs tech report
-        # NB this implementation keeps separate margin values for buying & sellling,
+        # NB this implementation keeps separate margin values for buying & selling,
         #    so a single trader can both buy AND sell
         #    -- in the original, traders were either buyers OR sellers
 
-        def __init__(self, ttype, tid, balance):
+        def __init__(self, ttype, tid, balance, time):
                 self.ttype = ttype
                 self.tid = tid
                 self.balance = balance
+                self.birthtime = time
+                self.profitpertime = 0
+                self.n_trades = 0
                 self.blotter = []
                 self.orders = []
+                self.n_quotes = 0
+                self.lastquote = None
                 self.job = None  # this gets switched to 'Bid' or 'Ask' depending on order-type
                 self.active = False  # gets switched to True while actively working an order
                 self.prev_change = 0  # this was called last_d in Cliff'97
@@ -533,8 +615,8 @@ class Trader_ZIP(Trader):
                         quoteprice = int(self.limit * (1 + self.margin))
                         self.price = quoteprice
 
-                        order = Order(self.tid, self.job, quoteprice, self.orders[0].qty, time)
-
+                        order = Order(self.tid, self.job, quoteprice, self.orders[0].qty, time, lob['QID'])
+                        self.lastquote = order
                 return order
 
 
@@ -608,8 +690,8 @@ class Trader_ZIP(Trader):
                                 # previous best bid was hit
                                 bid_hit = True
                 elif self.prev_best_bid_p != None:
-                        # the bid LOB has been emptied by a hit
-                                bid_hit = True
+                        # the bid LOB has been emptied: can't tell whether cancelled or hit so assume False
+                                bid_hit = False
 
                 # what, if anything, has happened on the ask LOB?
                 ask_improved = False
@@ -626,8 +708,8 @@ class Trader_ZIP(Trader):
                                 # trade happened and best ask price has got worse, or stayed same but quantity reduced -- assume previous best ask was lifted
                                 ask_lifted = True
                 elif self.prev_best_ask_p != None:
-                        # the bid LOB is empty now but was not previously, so must have been hit
-                                ask_lifted = True
+                        # the ask LOB is empty now but was not previously: canceled or lifted? We can't tell so assume false
+                                ask_lifted = False
 
 
                 if verbose and (bid_improved or bid_hit or ask_improved or ask_lifted):
@@ -744,15 +826,15 @@ def populate_market(traders_spec, traders, shuffle, verbose):
 
         def trader_type(robottype, name):
                 if robottype == 'GVWY':
-                        return Trader_Giveaway('GVWY', name, 0.00)
+                        return Trader_Giveaway('GVWY', name, 0.00, 0)
                 elif robottype == 'ZIC':
-                        return Trader_ZIC('ZIC', name, 0.00)
+                        return Trader_ZIC('ZIC', name, 0.00, 0)
                 elif robottype == 'SHVR':
-                        return Trader_Shaver('SHVR', name, 0.00)
+                        return Trader_Shaver('SHVR', name, 0.00, 0)
                 elif robottype == 'SNPR':
-                        return Trader_Sniper('SNPR', name, 0.00)
+                        return Trader_Sniper('SNPR', name, 0.00, 0)
                 elif robottype == 'ZIP':
-                        return Trader_ZIP('ZIP', name, 0.00)
+                        return Trader_ZIP('ZIP', name, 0.00, 0)
                 else:
                         sys.exit('FATAL: don\'t know robot type %s\n' % robottype)
 
@@ -814,9 +896,13 @@ def populate_market(traders_spec, traders, shuffle, verbose):
 # parameter "os" is order schedule
 # os['timemode'] is either 'periodic', 'drip-fixed', 'drip-jitter', or 'drip-poisson'
 # os['interval'] is number of seconds for a full cycle of replenishment
-# drip-poisson sequences will be normalised to ensure time of last replenisment <= interval
+# drip-poisson sequences will be normalised to ensure time of last replenishment <= interval
 # parameter "pending" is the list of future orders (if this is empty, generates a new one from os)
 # revised "pending" is the returned value
+#
+# also returns a list of "cancellations": trader-ids for those traders who are now working a new order and hence
+# need to kill quotes already on LOB from working previous order
+#
 #
 # if a supply or demand schedule mode is "random" and more than one range is supplied in ranges[],
 # then each time a price is generated one of the ranges is chosen equiprobably and
@@ -953,10 +1039,10 @@ def customer_orders(time, last_update, traders, trader_stats, os, pending, verbo
 
         n_buyers = trader_stats['n_buyers']
         n_sellers = trader_stats['n_sellers']
-        n_traders = n_buyers + n_sellers
 
         shuffle_times = True
 
+        cancellations = []
 
         if len(pending) < 1:
                 # list of pending (to-be-issued) customer orders is empty, so generate a new one
@@ -971,7 +1057,7 @@ def customer_orders(time, last_update, traders, trader_stats, os, pending, verbo
                         issuetime = time + issuetimes[t]
                         tname = 'B%02d' % t
                         orderprice = getorderprice(t, sched, n_buyers, mode, issuetime)
-                        order = Order(tname, ordertype, orderprice, 1, issuetime)
+                        order = Order(tname, ordertype, orderprice, 1, issuetime, -3.14)
                         new_pending.append(order)
                         
                 # supply side (sellers)
@@ -982,7 +1068,7 @@ def customer_orders(time, last_update, traders, trader_stats, os, pending, verbo
                         issuetime = time + issuetimes[t]
                         tname = 'S%02d' % t
                         orderprice = getorderprice(t, sched, n_sellers, mode, issuetime)
-                        order = Order(tname, ordertype, orderprice, 1, issuetime)
+                        order = Order(tname, ordertype, orderprice, 1, issuetime, -3.14)
                         new_pending.append(order)
         else:
                 # there are pending future orders: issue any whose timestamp is in the past
@@ -992,19 +1078,21 @@ def customer_orders(time, last_update, traders, trader_stats, os, pending, verbo
                                 # this order should have been issued by now
                                 # issue it to the trader
                                 tname = order.tid
-                                traders[tname].add_order(order)
-                                if verbose: print('New order: %s' % order)
+                                response = traders[tname].add_order(order, verbose)
+                                if verbose: print('Customer order: %s %s' % (response, order) )
+                                if response == 'LOB_Cancel' :
+                                    cancellations.append(tname)
+                                    if verbose: print('Cancellations: %s' % (cancellations))
                                 # and then don't add it to new_pending (i.e., delete it)
                         else:
                                 # this order stays on the pending list
                                 new_pending.append(order)
-
-        return new_pending
+        return [new_pending, cancellations]
 
 
 
 # one session in the market
-def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dumpfile, dump_each_trade):
+def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dumpfile, dump_each_trade, verbose):
 
 
         # initialise the exchange
@@ -1013,7 +1101,7 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
 
         # create a bunch of traders
         traders = {}
-        trader_stats = populate_market(trader_spec, traders, True, True)
+        trader_stats = populate_market(trader_spec, traders, True, verbose)
 
 
         # timestep set so that can process all traders in one second
@@ -1032,33 +1120,49 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
         respond_verbose = False
         bookkeep_verbose = False
 
-        pending_orders = []       
+        pending_cust_orders = []
+
+        if verbose: print('\n%s;  ' % (sess_id))
 
         while time < endtime:
 
                 # how much time left, as a percentage?
                 time_left = (endtime - time) / duration
 
-# #                print('%s; t=%08.2f (%4.1f) ' % (sess_id, time, time_left*100))
+                # if verbose: print('\n\n%s; t=%08.2f (%4.1f/100) ' % (sess_id, time, time_left*100))
 
                 trade = None
 
-                pending_orders = customer_orders(time, last_update, traders, trader_stats,
-                                                 order_schedule, pending_orders, orders_verbose)
+                [pending_cust_orders, kills] = customer_orders(time, last_update, traders, trader_stats,
+                                                 order_schedule, pending_cust_orders, orders_verbose)
+
+                # if any newly-issued customer orders mean quotes on the LOB need to be cancelled, kill them
+                if len(kills) > 0 :
+                        # if verbose : print('Kills: %s' % (kills))
+                        for kill in kills :
+                                # if verbose : print('lastquote=%s' % traders[kill].lastquote)
+                                if traders[kill].lastquote != None :
+                                        # if verbose : print('Killing order %s' % (str(traders[kill].lastquote)))
+                                        exchange.del_order(traders[kill].lastquote, verbose)
 
 
-                # get an order (or None) from a randomly chosen trader
+                # get a limit-order quote (or None) from a randomly chosen trader
                 tid = list(traders.keys())[random.randint(0, len(traders) - 1)]
                 order = traders[tid].getorder(time, time_left, exchange.publish_lob(time, lob_verbose))
 
+                # if verbose: print('Trader Quote: %s' % (order))
+
                 if order != None:
+                        if order.otype == 'Ask' and order.price < traders[tid].orders[0].price: sys.exit('Bad ask')
+                        if order.otype == 'Bid' and order.price > traders[tid].orders[0].price: sys.exit('Bad bid')
                         # send order to exchange
+                        traders[tid].n_quotes = 1
                         trade = exchange.process_order2(time, order, process_verbose)
                         if trade != None:
                                 # trade occurred,
                                 # so the counterparties update order lists and blotters
-                                traders[trade['party1']].bookkeep(trade, order, bookkeep_verbose)
-                                traders[trade['party2']].bookkeep(trade, order, bookkeep_verbose)
+                                traders[trade['party1']].bookkeep(trade, order, bookkeep_verbose, time)
+                                traders[trade['party2']].bookkeep(trade, order, bookkeep_verbose, time)
                                 if dump_each_trade: trade_stats(sess_id, traders, tdump, time, exchange.publish_lob(time, lob_verbose))
 
                         # traders respond to whatever happened
@@ -1066,7 +1170,7 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
                         for t in traders:
                                 # NB respond just updates trader's internal variables
                                 # doesn't alter the LOB, so processing each trader in
-                                # seqeunce (rather than random/shuffle) isn't a problem
+                                # sequence (rather than random/shuffle) isn't a problem
                                 traders[t].respond(time, lob, trade, respond_verbose)
 
                 time = time + timestep
@@ -1151,6 +1255,7 @@ if __name__ == "__main__":
 # #
 # #        sys.exit('Done Now')
 
+
         
 
         # run a sequence of trials that exhaustively varies the ratio of four trader types
@@ -1182,12 +1287,12 @@ if __name__ == "__main__":
                                                        ('ZIC', trdr_3_n), ('ZIP', trdr_4_n)]
                                         sellers_spec = buyers_spec
                                         traders_spec = {'sellers':sellers_spec, 'buyers':buyers_spec}
-                                        print buyers_spec
+                                        # print buyers_spec
                                         trial = 1
                                         while trial <= n_trials_per_ratio:
                                                 trial_id = 'trial%07d' % trialnumber
                                                 market_session(trial_id, start_time, end_time, traders_spec,
-                                                               order_sched, tdump, False)
+                                                               order_sched, tdump, False, True)
                                                 tdump.flush()
                                                 trial = trial + 1
                                                 trialnumber = trialnumber + 1
