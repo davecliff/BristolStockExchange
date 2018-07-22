@@ -43,14 +43,12 @@
 #
 # NB this code has been written to be readable/intelligible, not efficient!
 
-
-
 # could import pylab here for graphing etc
+
 import sys
 import math
 import random
-from operator import itemgetter, attrgetter, methodcaller
-import bse_test
+
 
 bse_sys_minprice = 1  # minimum price in the system, in cents/pennies
 bse_sys_maxprice = 1000  # maximum price in the system, in cents/pennies
@@ -239,7 +237,7 @@ class Exchange(Orderbook):
                 return [order.qid, response]
 
 
-        def del_order(self, order, verbose):
+        def del_order(self, time, order, verbose):
                 # delete a trader's quot/order from the exchange, update all internal records
                 tid = order.tid
                 if order.otype == 'Bid':
@@ -251,7 +249,9 @@ class Exchange(Orderbook):
                         else: # this side of book is empty
                                 self.bids.best_price = None
                                 self.bids.best_tid = None
-                        #self.tape.append(['Cancel', order])
+                        cancel_record = { 'type': 'Cancel', 'time': time, 'order': order }
+                        self.tape.append(cancel_record)
+
                 elif order.otype == 'Ask':
                         self.asks.book_del(order)
                         if self.asks.n_orders > 0 :
@@ -261,7 +261,8 @@ class Exchange(Orderbook):
                         else: # this side of book is empty
                                 self.asks.best_price = None
                                 self.asks.best_tid = None
-                        #self.tape.append(['Cancel', order])
+                        cancel_record = { 'type': 'Cancel', 'time': time, 'order': order }
+                        self.tape.append(cancel_record)
                 else:
                         # neither bid nor ask?
                         sys.exit('bad order type in del_quote()')
@@ -314,11 +315,13 @@ class Exchange(Orderbook):
                 if counterparty != None:
                         # process the trade
                         if verbose: print('>>>>>>>>>>>>>>>>>TRADE t=%5.2f $%d %s %s' % (time, price, counterparty, order.tid))
-                        transaction_record = {'time': time,
+                        transaction_record = { 'type': 'Trade',
+                                               'time': time,
                                                'price': price,
                                                'party1':counterparty,
                                                'party2':order.tid,
-                                               'qty': order.qty}
+                                               'qty': order.qty
+                                              }
                         self.tape.append(transaction_record)
                         return transaction_record
                 else:
@@ -329,7 +332,8 @@ class Exchange(Orderbook):
         def tape_dump(self, fname, fmode, tmode):
                 dumpfile = open(fname, fmode)
                 for tapeitem in self.tape:
-                        dumpfile.write('%s, %s\n' % (tapeitem['time'], tapeitem['price']))
+                        if tapeitem['type'] == 'Trade' :
+                                dumpfile.write('%s, %s\n' % (tapeitem['time'], tapeitem['price']))
                 dumpfile.close()
                 if tmode == 'wipe':
                         self.tape = []
@@ -349,6 +353,7 @@ class Exchange(Orderbook):
                                      'n': self.asks.n_orders,
                                      'lob':self.asks.lob_anon}
                 public_data['QID'] = self.quote_id
+                public_data['tape'] = self.tape
                 if verbose:
                         print('publish_lob: t=%d' % time)
                         print('BID_lob=%s' % public_data['bids']['lob'])
@@ -690,8 +695,12 @@ class Trader_ZIP(Trader):
                                 # previous best bid was hit
                                 bid_hit = True
                 elif self.prev_best_bid_p != None:
-                        # the bid LOB has been emptied: can't tell whether cancelled or hit so assume False
+                        # the bid LOB has been emptied: was it cancelled or hit?
+                        last_tape_item = lob['tape'][-1]
+                        if last_tape_item['type'] == 'Cancel' :
                                 bid_hit = False
+                        else:
+                                bid_hit = True
 
                 # what, if anything, has happened on the ask LOB?
                 ask_improved = False
@@ -708,8 +717,12 @@ class Trader_ZIP(Trader):
                                 # trade happened and best ask price has got worse, or stayed same but quantity reduced -- assume previous best ask was lifted
                                 ask_lifted = True
                 elif self.prev_best_ask_p != None:
-                        # the ask LOB is empty now but was not previously: canceled or lifted? We can't tell so assume false
+                        # the ask LOB is empty now but was not previously: canceled or lifted?
+                        last_tape_item = lob['tape'][-1]
+                        if last_tape_item['type'] == 'Cancel' :
                                 ask_lifted = False
+                        else:
+                                ask_lifted = True
 
 
                 if verbose and (bid_improved or bid_hit or ask_improved or ask_lifted):
@@ -1143,7 +1156,7 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
                                 # if verbose : print('lastquote=%s' % traders[kill].lastquote)
                                 if traders[kill].lastquote != None :
                                         # if verbose : print('Killing order %s' % (str(traders[kill].lastquote)))
-                                        exchange.del_order(traders[kill].lastquote, verbose)
+                                        exchange.del_order(time, traders[kill].lastquote, verbose)
 
 
                 # get a limit-order quote (or None) from a randomly chosen trader
