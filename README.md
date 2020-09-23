@@ -1,4 +1,4 @@
-<i>NB: in October 2019, seven years since BSE was first launched, we'll be making BSE2 available in a separate repo. BSE2 is a major refactoring and extension of the original BSE. This, the original BSE repo, will be retained for legacy and reference, but BSE2 should be used in future.</i>
+<i>NB: in Q4 of 2020, eight years since BSE was first launched, we'll be making BSE2 available in a separate repo. BSE2 is a major refactoring and extension of the original BSE. This, the original BSE repo, will be retained for legacy and reference, but BSE2 should be used in future.</i>
 
 BSE, The Bristol Stock Exchange, is a simple minimal simulation of a limit-order-book financial exchange, developed for teaching. The aim is to let students explore writing automated trading strategies that deal with "Level 2" market data.
 
