@@ -60,5 +60,5 @@ ax.plot(x,cost2_list,linestyle="dashed", label= "IAA's average profit = "+str(fl
 ax.set_xlabel('trading day')
 ax.set_ylabel('total profit in each trading day')
 ax.legend()
-plot.savefig("./balance4.png")
+plot.savefig("./line_chart.png")
 

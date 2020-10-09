@@ -8,7 +8,7 @@ bse_sys_maxprice = 200  # maximum price in the system, in cents/pennies
 
 class Trader_Simple_MLOFI(Trader):
 
-    def __init__(self, ttype, tid, balance, time):
+    def __init__(self, ttype, tid, balance, time,m):
 
         Trader.__init__(self, ttype, tid, balance, time)
 
@@ -18,10 +18,13 @@ class Trader_Simple_MLOFI(Trader):
 
         # variable for MLOFI
         self.last_lob = None;
-        self.list_OFI = [];
-        self.list_D = [];
+        self.es_list = [];
+        self.ds_list = [];
 
-    def cal_level_n_e(self, current_lob, n):
+        #variable
+        self.m = m;
+
+    def calc_level_n_e(self, current_lob, n):
         b_n = 0
         r_n = 0
         a_n = 0
@@ -79,32 +82,20 @@ class Trader_Simple_MLOFI(Trader):
 
         return delta_w - delta_v
 
-    def cal_e(self, time, lob, trade, verbose):
+    def calc_es(self, lob, m, verbose):
+        new_e = {}
+        for i in range(1, m + 1):
+            new_e['level' + str(i)] = self.calc_level_n_e(lob, i)
 
-        level_1 = self.cal_level_n_e(lob, 1)
-        level_2 = self.cal_level_n_e(lob, 2)
-        level_3 = self.cal_level_n_e(lob, 3)
-        e = {
-            'level1': level_1,
-            'level2': level_2,
-            'level3': level_3,
-        }
-        # print 'ofi is:'
-        # print str(e)
-        self.list_OFI.append(e)
+        self.es_list.append(new_e)
 
-    def cal_depth(self, lob):
-        level_1 = self.cal_depth_n(lob, 1)
-        level_2 = self.cal_depth_n(lob, 2)
-        level_3 = self.cal_depth_n(lob, 3)
-        d = {
-            'level1': level_1,
-            'level2': level_2,
-            'level3': level_3,
-        }
-        # print 'depth is:'
-        # print str(d)
-        self.list_D.append(d);
+    def calc_ds(self, lob, m, verbose):
+        new_d = {}
+
+        for i in range(1, m + 1):
+            new_d['level' + str(i)] = self.cal_depth_n(lob, i)
+
+        self.ds_list.append(new_d)
 
     def cal_depth_n(self, lob, n):
 
@@ -130,109 +121,94 @@ class Trader_Simple_MLOFI(Trader):
             self.job = self.orders[0].atype
             ostyle = self.orders[0].astyle
             if otype == 'Bid':
-                if lob['bids']['n'] > 0:
+                if(lob['midprice'] != None and lob['midprice']<self.limit):
+                    quoteprice = lob['midprice']
+
+                elif lob['bids']['n'] > 0:
                     quoteprice = lob['bids']['bestp']
                     if quoteprice > self.limit:
                         quoteprice = self.limit
                 else:
                     quoteprice = self.limit
             else:
-                if lob['asks']['n'] > 0:
+                if(lob['midprice'] != None and lob['midprice']>self.limit):
+                    quoteprice = lob['midprice']
+                elif lob['asks']['n'] > 0:
                     quoteprice = lob['asks']['bestp']
                     if quoteprice < self.limit:
                         quoteprice = self.limit
                 else:
                     quoteprice = self.limit
-            def imbalance_alter(quoteprice, lob):
 
 
+            def imbalance_alter(quoteprice, lob, countdown, m):
 
+                mlofi_list = [0 for i in range(m)]
+                cd_list = [0 for i in range(m)]
+                ad_list = []
+                n = 1
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-                level_1_ofi_cul = 0
-                level_2_ofi_cul = 0
-                level_3_ofi_cul = 0
+                while len(self.es_list) >= n:
+                    for i in range(m):
+                        mlofi_list[i] += self.es_list[-n]['level' + str(i+1)]
+                    n += 1
+                    if n >= 11:
+                        break
 
                 n = 1
-                while (len(self.list_OFI) >= n):
-                    level_1_ofi_cul = level_1_ofi_cul + self.list_OFI[-n]['level1']
-                    level_2_ofi_cul = level_2_ofi_cul + self.list_OFI[-n]['level2']
-                    level_3_ofi_cul = level_3_ofi_cul + self.list_OFI[-n]['level3']
-                    n = n + 1
-                    if (n >= 6): break
 
-                level_1_depth_cul = 0;
-                level_2_depth_cul = 0;
-                level_3_depth_cul = 0;
+                while len(self.ds_list) >= n:
+                    for i in range(m):
+                        cd_list[i] += self.ds_list[-n]['level' + str(i+1)]
+                    n += 1
+                    if n >= 11:
+                        break
 
-                m = 1
-                while (len(self.list_D) >= m):
+                for i in range(m):
+                    temp = None
+                    if n == 1:
+                        temp = cd_list[i]+1
+                    else:
+                        temp = cd_list[i]/(n-1)+1
+                    ad_list.append(temp)
 
-                    level_1_depth_cul = level_1_depth_cul + self.list_D[-m]['level1']
-                    level_2_depth_cul = level_2_depth_cul + self.list_D[-m]['level2']
-                    level_3_depth_cul = level_3_depth_cul + self.list_D[-m]['level3']
-                    m = m + 1
-                    if (m >= 4): break
-
-                # if(level_1_depth_cul==0): level_1_depth_cul = 10000
-                # if(level_2_depth_cul==0): level_2_depth_cul = 10000
-                # if(level_3_depth_cul==0): level_3_depth_cul = 10000
-                if m == 1:
-                    level_1_depth_averge = level_1_depth_cul + 1
-                    level_2_depth_averge = level_2_depth_cul + 1
-                    level_3_depth_averge = level_3_depth_cul + 1
-
-                else:
-                    level_1_depth_averge = level_1_depth_cul / (m - 1) + 1
-                    level_2_depth_averge = level_2_depth_cul / (m - 1) + 1
-                    level_3_depth_averge = level_3_depth_cul / (m - 1) + 1
-                c = 0.5
+                c = 5
                 decay = 0.8
+                offset = 0
 
-                # print 'level_1_depth_averge is %s'%level_1_depth_averge
-                # print 'level_2_depth_averge is %s'%level_2_depth_averge
-                # print 'level_3_depth_averge is %s'%level_3_depth_averge
-                offset = level_1_ofi_cul * c / level_1_depth_averge + decay * level_2_ofi_cul * c / level_2_depth_averge + decay * decay * level_3_ofi_cul * c / level_3_depth_averge
+                for i in range(m):
+                    offset += int(mlofi_list[i]*c*pow(decay,i)/ ad_list[i])
 
-                # quoteprice_iaa = (quoteprice_aa+offset)*0.9 + 0.1*quoteprice_aa
+
                 benchmark = quoteprice;
                 if(lob['midprice'] != None):
                         benchmark = lob['midprice']
-                        # print 'midprice is %d' % benchmark
-                # print 'benchmark = %d' % benchmark
-                quoteprice_isimple = benchmark + offset
-                if self.job == 'Bid' and quoteprice_isimple > self.limit:
-                    quoteprice_isimple = self.limit
-                if self.job == 'Ask' and quoteprice_isimple < self.limit:
-                    quoteprice_isimple = self.limit
+                # print 'midprice is %d' % benchmark
 
-                # print 'IAA_MLOFI original quotaprice: %d' % (quoteprice)
-                # print 'offset is %d'%offset
-                # print 'level1 ofi is %d'%level_1_ofi_cul
-                # print 'level2 ofi is %d'%level_2_ofi_cul
-                # print 'level3 ofi is %d'%level_3_ofi_cul
-                # print 'level1 depth is %d'%level_1_depth_averge
-                # print 'level2 depth is %d'%level_2_depth_averge
-                # print 'level3 depth is %d'%level_3_depth_averge
-                # print 'offset is %d'%offset
-                # print 'IAA_MLOFI final quotaprice: %d' % (quoteprice_isimple)
-                # print 'IAAB_MLOFI JOB IS %s' % self.job
-                return quoteprice_isimple
 
-            quoteprice_isimple = imbalance_alter(quoteprice, lob)
+                quoteprice_mlofi = quoteprice + 0.8 * (benchmark + offset - quoteprice)
+                if self.job == 'Bid' and quoteprice_mlofi > self.limit:
+                    quoteprice_mlofi = self.limit
+                if self.job == 'Ask' and quoteprice_mlofi < self.limit:
+                    quoteprice_mlofi = self.limit
+
+
+
+                if countdown < 0.3 :
+                    print "insert"
+                    if self.job == 'Bid' and (len(lob['asks']['lob']) >= 1) and lob['asks']['lob'][0][0] < self.limit:
+                        quoteprice_mlofi = lob['asks']['lob'][0][0]
+                    if self.job == 'Ask' and (len(lob['bids']['lob']) >= 1) and lob['bids']['lob'][0][0] > self.limit:
+                        quoteprice_mlofi = lob['bids']['lob'][0][0]
+
+                if self.job == 'Bid' and quoteprice_mlofi < bse_sys_minprice:
+                    quoteprice_mlofi = bse_sys_minprice + 1
+                if self.job == 'Ask' and quoteprice_mlofi > bse_sys_maxprice:
+                    quoteprice_mlofi = bse_sys_maxprice - 1
+
+                return quoteprice_mlofi
+
+            quoteprice_isimple = imbalance_alter(quoteprice, lob,countdown,self.m)
 
             order = Order(self.tid,
                           self.orders[0].atype,
@@ -245,25 +221,10 @@ class Trader_Simple_MLOFI(Trader):
 
     def respond(self, time, lob, trade, verbose):
 
-        ## End nicked from ZIP
         if (self.last_lob == None):
             self.last_lob = lob
         else:
-            # print ''
-            # print ''
-            # print 'pre lob'
-            # print 'bid anon:'
-            # print self.last_lob['bids']['lob']
-            # print 'ask anon:'
-            # print self.last_lob['asks']['lob']
-            # print 'current lob'
-            # print 'bid anon:'
-            # print lob['bids']['lob']
-            # print 'ask anon:'
-            # print lob['asks']['lob']
-
-            self.cal_e(time, lob, trade, verbose)
-            self.cal_depth(lob);
+            self.calc_es(lob, self.m, verbose)
+            self.calc_ds(lob, self.m, verbose)
             self.last_lob = lob;
-
 

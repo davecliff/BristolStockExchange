@@ -26,7 +26,7 @@ for item in csv_reader:
     name2 = item[14]
     # name3 = item[10]
     # name4 = item[14]
-    # print '%s,%s'%(item[5],item[9])
+
     count += 1
 
 

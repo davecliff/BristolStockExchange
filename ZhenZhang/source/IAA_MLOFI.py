@@ -54,7 +54,7 @@ class Trader_IAA_MLOFI(Trader):
         self.es_list = [];
         self.ds_list = [];
 
-        #variable
+        #set m
         self.m = m;
 
 

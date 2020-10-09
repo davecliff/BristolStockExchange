@@ -4,8 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import csv
 from pylab import *
-# Fixing random state for reproducibility
-np.random.seed(19680801)
+
 
 csv_file = open("../Mybalances.csv","r")
 csv_reader = csv.reader(csv_file);
@@ -27,24 +26,8 @@ count = 0
 for item in csv_reader:
     y1.append(int(float(item[5])))
     # y2.append(int(float(item[13])))
-    # cy1 += int(float(item[5]))
-    # cy2 += int(float(item[13]))
-
-
-
     y3.append(int(float(item[17])))
     #y4.append(int(float(item[21])))
-
-    # y3.append(int(float(item[13])))
-    # y4.append(int(float(item[17])))
-    # name1 = item[2]
-    # name2 = item[6]
-    # name3 = item[10]
-    # name4 = item[14]
-    # print '%s,%s'%(item[5],item[9])
-    count += 1
-
-
 
 
 
@@ -67,15 +50,6 @@ x1,y = dp1['medians'][0].get_xydata()[1]
 ax1.text(x1+0.075, y, '%.1f' % y,horizontalalignment='left')
 x2,y = dp1['medians'][1].get_xydata()[1]
 ax1.text(x2+0.075, y, '%.1f' % y,horizontalalignment='left')
-
-# for line in dp1['medians']:
-#     # get position data for median line
-#     x, y = line.get_xydata()[1] # top of median line
-#     # overlay median value
-#     print x
-#     print y
-#     ax1.text(x+0.125, y, '%.1f' % y,horizontalalignment='left')
-
 
 for index in range(len(dp1['means'])):
     y = dp1['means'][index].get_ydata()[0]
@@ -118,11 +92,8 @@ for index in range(len(dp1['boxes'])):
 
 
 for index in range(len(dp1['caps'])):
-    print 'one round'
-    print index
+
     y = dp1['caps'][index].get_ydata()[0]
-    print 'bottom'
-    print y
     if index==0:
         ax1.text(x1 + 0.075, y, '%.1f' % y, horizontalalignment='left')
     elif index ==1:
@@ -169,16 +140,6 @@ dp2 = ax2.boxplot(dif1,vert=True,whis=0.75,notch=False, showmeans=True,labels=['
 
 x1,y = dp2['medians'][0].get_xydata()[1]
 ax2.text(x1+0.075, y, '%.1f' % y,horizontalalignment='left')
-# x2,y = dp1['medians'][1].get_xydata()[1]
-# ax1.text(x2+0.075, y, '%.1f' % y,horizontalalignment='left')
-
-# for line in dp1['medians']:
-#     # get position data for median line
-#     x, y = line.get_xydata()[1] # top of median line
-#     # overlay median value
-#     print x
-#     print y
-#     ax1.text(x+0.125, y, '%.1f' % y,horizontalalignment='left')
 
 
 for index in range(len(dp2['means'])):
@@ -222,11 +183,7 @@ for index in range(len(dp2['boxes'])):
 
 
 for index in range(len(dp2['caps'])):
-    print 'one round'
-    print index
     y = dp2['caps'][index].get_ydata()[0]
-    print 'bottom'
-    print y
     if index==0:
         ax2.text(x1 + 0.075, y, '%.1f' % y, horizontalalignment='left')
     elif index ==1:
@@ -239,7 +196,7 @@ for index in range(len(dp2['caps'])):
 
 
 
-plt.savefig("./box1.png")
+plt.savefig("./box.png")
 
 
 # # fake up some data

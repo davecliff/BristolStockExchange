@@ -52,11 +52,11 @@ import csv
 from datetime import datetime
 
 from BSE2_msg_classes import Assignment, Order, Exch_msg
-from BSE_trader_agents import Trader_ISHV, Trader_Shaver,Trader_Giveaway,Trader_AA, Trader_Sniper, Trader_ZIC,Trader_ZIP,Trader_OAA #, Trader_IAAB
+from BSE_trader_agents import Trader_ISHV, Trader_Shaver,Trader_Giveaway,Trader_AA, Trader_Sniper, Trader_ZIC,Trader_ZIP
 from IZIP_MLOFI import Trader_IZIP_MLOFI
 from IAA_MLOFI import Trader_IAA_MLOFI
 from Simple_MLOFI import Trader_Simple_MLOFI
-from GDX import  Trader_GDX
+from GDX import Trader_GDX
 from IGDX_MLOFI import Trader_IGDX_MLOFI
 from IAA_NEW import Trader_IAA_NEW
 from ZZISHV import Trader_ZZISHV
@@ -1189,6 +1189,7 @@ def populate_market(traders_spec, traders, shuffle, verbose):
 
 
         def trader_type(robottype, name):
+                ## previous trading algorithms
                 if robottype == 'GVWY':
                         return Trader_Giveaway('GVWY', name, 0.00, 0)
                 elif robottype == 'ZIC':
@@ -1203,34 +1204,46 @@ def populate_market(traders_spec, traders, shuffle, verbose):
                         return Trader_ZIP('ZIP', name, 0.00, 0)
                 elif robottype == 'AA':
                         return Trader_AA('AA', name, 0.00, 0)
-
+                ## an alias of AA
                 elif robottype == 'AAA':
                         return Trader_AA('AAA', name, 0.00, 0)
-
-
-                elif robottype == 'SIMPLE':
-                        return Trader_Simple_MLOFI('SIMPLE',name,0.00,0)
-                elif robottype == 'IAA_MLOFI_ASK':
-                        return Trader_IAA_MLOFI('MLOFI_ASK',name,0.00,0)
-                elif robottype == 'IAA_MLOFI_BID':
-                        return Trader_IAA_MLOFI('MLOFI_BID',name,0.00,0)
+                ## an alias of AA
                 elif robottype == 'AAAA':
                         return Trader_AA('AAAA', name, 0.00, 0)
 
-                elif robottype == 'ISHV_ASK':
-                        return Trader_ISHV('ISHV_ASK', name, 0.00, 0)
-                elif robottype == 'GDX':
-                        return Trader_GDX('GDX', name, 0.00, 0)
-                elif robottype == 'GDXB':
-                        return Trader_GDX('GDXB', name, 0.00, 0)
-                elif robottype == 'ZIPP':
-                        return Trader_ZIP('ZIPP', name, 0.00, 0)
 
+
+                ## IAA (only consider MLOFI) and set m=3
+                elif robottype == 'IAA':
+                        return Trader_IAA_MLOFI('IAA', name, 0.00,0, 3)
+                elif robottype == 'IAA_3':
+                        return Trader_IAA_MLOFI('IAA_3', name, 0.00,0, 3)
                 elif robottype == 'IAA_MLOFI':
                         return Trader_IAA_MLOFI('MLOFI',name,0.00,0,3)
+
+                ## IAA consider both "impact-sensitive" module and "evaluation" module
+                elif robottype == 'IAA_NEW':
+                        return Trader_IAA_NEW('IAA_NEW', name, 0.00, 0, 3)
+                ## ZZIZIP: my version of IZIP
+                elif robottype == 'IZIP':
+                        return Trader_IZIP_MLOFI('IZIP',name,0.00,0,3)
+                ## ZZISHV: my version of ISHV
+                elif robottype == 'ZZISHV':
+                        return Trader_ZZISHV('ZZISHV', name, 0.00, 0,3)
+
+                ## only consider MLOFI and set m=3
+                ## not based on other algorithms
+                ## use midprice or best price or limit price as its quote benchmark
+                elif robottype == 'SIMPLE':
+                        return Trader_Simple_MLOFI('SIMPLE',name,0.00,0,3)
+
+
+
+
+
+                ## IAA (only consider MLOFI) with different m
                 elif robottype == 'IAA_MLOFI1':
                         return Trader_IAA_MLOFI('MLOFI1',name,0.00,0, 1)
-
                 elif robottype == 'IAA_MLOFI2':
                         return Trader_IAA_MLOFI('MLOFI2', name, 0.00,0, 2)
                 elif robottype == 'IAA_MLOFI3':
@@ -1273,14 +1286,15 @@ def populate_market(traders_spec, traders, shuffle, verbose):
                         return Trader_IAA_MLOFI('MLOFI30', name, 0.00, 0, 30)
                 elif robottype == 'IAA_MLOFI50':
                         return Trader_IAA_MLOFI('MLOFI50', name, 0.00, 0, 50)
+
+
+
                 elif robottype == 'IZIP_3':
                         return Trader_IZIP_MLOFI('IZIP_3',name,0.00,0,3)
-
                 elif robottype == 'IGDX_3':
                         return Trader_IGDX_MLOFI('IGDX_3', name, 0.00, 0, 3)
                 elif robottype == 'IZIPB_3':
                         return Trader_IZIP_MLOFI('IZIPB_3',name,0.00,0,3)
-
                 elif robottype == 'IGDXB_3':
                         return Trader_IGDX_MLOFI('IGDXB_3', name, 0.00, 0, 3)
                 elif robottype == 'IAAB_3':
@@ -1300,6 +1314,14 @@ def populate_market(traders_spec, traders, shuffle, verbose):
                 elif robottype == 'BID_IAA_3':
                         return Trader_IAA_MLOFI('BID_IAA_3', name, 0.00, 0, 3)
 
+                elif robottype == 'ISHV_ASK':
+                        return Trader_ISHV('ISHV_ASK', name, 0.00, 0)
+                elif robottype == 'GDX':
+                        return Trader_GDX('GDX', name, 0.00, 0)
+                elif robottype == 'GDXB':
+                        return Trader_GDX('GDXB', name, 0.00, 0)
+                elif robottype == 'ZIPP':
+                        return Trader_ZIP('ZIPP', name, 0.00, 0)
                 elif robottype == 'ASK_AA':
                         return Trader_AA('ASK_AA', name, 0.00, 0)
                 elif robottype == 'BID_AA':
@@ -1314,10 +1336,7 @@ def populate_market(traders_spec, traders, shuffle, verbose):
                         return Trader_ZIP('BID_ZIP', name, 0.00, 0)
 
 
-                elif robottype == 'IAA':
-                        return Trader_IAA_MLOFI('IAA', name, 0.00,0, 3)
-                elif robottype == 'IAA_3':
-                        return Trader_IAA_MLOFI('IAA_3', name, 0.00,0, 3)
+
 
 
                 elif robottype == 'ASK_SHVR':
@@ -1337,12 +1356,8 @@ def populate_market(traders_spec, traders, shuffle, verbose):
 
 
 
-                elif robottype == 'IAA_NEW':
-                        return Trader_IAA_NEW('IAA_NEW', name, 0.00, 0, 3)
 
 
-                elif robottype == 'ZZISHV':
-                        return Trader_ZZISHV('ZZISHV', name, 0.00, 0,3)
                 elif robottype == 'ASK_ZZISHV':
                         return Trader_ZZISHV('ASK_ZZISHV', name, 0.00, 0,3)
                 elif robottype == 'BID_ZZISHV':
@@ -1356,8 +1371,6 @@ def populate_market(traders_spec, traders, shuffle, verbose):
                         return Trader_ZIP('ZIPPP', name, 0.00, 0)
                 elif robottype == 'ZIPP':
                         return Trader_ZIP('ZIPP', name, 0.00, 0)
-                elif robottype == 'IZIP':
-                        return Trader_IZIP_MLOFI('IZIP',name,0.00,0,3)
                 elif robottype == 'IGDX':
                         return Trader_IGDX_MLOFI('IGDX', name, 0.00, 0, 3)
 
@@ -2041,12 +2054,10 @@ if __name__ == "__main__":
     for session in range(100):
             sess_id = 'Test%02d' % session
             print('Session %s; ' % sess_id)
-
-
             market_session(sess_id, start_time, end_time, traders_spec, order_sched, summary_data_file, tape_data_file, blotter_data_file, True, False)
 
     summary_data_file.close()
     tape_data_file.close()
     blotter_data_file.close()
 
-    print('\n Experiment Finished')
+    print('\nExperiment Finished')
