@@ -1091,8 +1091,6 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, tdu
 
     time = starttime
 
-
-
     pending_cust_orders = []
 
     if verbose:
