@@ -1215,8 +1215,8 @@ if __name__ == "__main__":
     supply_schedule = [{'from': start_time, 'to': end_time, 'ranges': [range1], 'stepmode': 'fixed'}
                        ]
 
-    range1 = (50, 150)
-    demand_schedule = [{'from': start_time, 'to': end_time, 'ranges': [range1], 'stepmode': 'fixed'}
+    range2 = (50, 150)
+    demand_schedule = [{'from': start_time, 'to': end_time, 'ranges': [range2], 'stepmode': 'fixed'}
                        ]
 
     order_sched = {'sup': supply_schedule, 'dem': demand_schedule,
