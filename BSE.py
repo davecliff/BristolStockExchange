@@ -144,7 +144,7 @@ class Orderbook_half:
         # print('book_add > %s %s' % (order, self.orders))
         
         # if this is an ask, does the price set a new extreme-high record?
-        if (self.booktype == 'Ask') and (order.price > self.session_extreme):
+        if (self.booktype == 'Ask') and ((self.session_extreme is None) or (order.price > self.session_extreme)):
             self.session_extreme = int(order.price)
 
         n_orders = self.n_orders
