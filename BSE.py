@@ -547,6 +547,251 @@ class Trader_Sniper(Trader):
         return order
 
 
+# Trader subclass PRZI
+# added 23 March 2021
+# Dave Cliff's Parameterized-Response Zero-Intelligence (PRZI) trader
+# see https://arxiv.org/abs/2103.11341
+class Trader_PRZI(Trader):
+
+    def __init__(self, ttype, tid, balance, time):
+        # PRZI strategy defined by parameter "strat"
+        # here this is randomly assigned
+        # strat * direction = -1 = > GVWY; =0 = > ZIC; =+1 = > SHVR
+
+        Trader.__init__(self, ttype, tid, balance, time)
+        self.theta0 = 100           # threshold-function limit value
+        self.m = 4                  # tangent-function multiplier
+        self.strat = 1.0 - 2 * random.random() # strategy parameter: must be in range [-1.0, +1.0]
+        self.cdf_lut_bid = None     # look-up table for buyer cumulative distribution function
+        self.cdf_lut_ask = None     # look-up table for buyer cumulative distribution function
+        self.pmax = None            # this trader's estimate of the maximum price the market will bear
+        self.pmax_c_i = math.sqrt(random.randint(1,10))  # multiplier coefficient when estimating p_max
+
+    def getorder(self, time, countdown, lob):
+
+        # shvr_price tells us what price a SHVR would quote in these circs
+        def shvr_price(otype, limit, lob):
+
+            if otype == 'Bid':
+                if lob['bids']['n'] > 0:
+                    shvr_p = lob['bids']['best'] + 1   # BSE tick size is always 1
+                    if shvr_p > limit:
+                        shvr_p = limit
+                else:
+                    shvr_p = lob['bids']['worst']
+            else:
+                if lob['asks']['n'] > 0:
+                    shvr_p = lob['asks']['best'] - 1   # BSE tick size is always 1
+                    if shvr_p < limit:
+                        shvr_p = limit
+                else:
+                    shvr_p = lob['asks']['worst']
+
+            return shvr_p
+
+        # calculate cumulative distribution function (CDF) look-up table (LUT)
+        def calc_cdf_lut(strat, t0, m, dirn, pmin, pmax):
+            # set parameter values and calculate CDF LUT
+            # dirn is direction: -1 for buy, +1 for sell
+
+            # the threshold function used to clip
+            def threshold(theta0, x):
+                t = max(-1*theta0, min(theta0, x))
+                return t
+
+            epsilon = 0.000001 #used to catch DIV0 errors
+            verbose = False
+
+            if (strat > 1.0) or (strat < -1.0):
+                # out of range
+                sys.exit('FAIL: PRZI.getorder() self.strat out of range\n')
+
+            if (dirn != 1.0) and (dirn != -1.0):
+                # out of range
+                sys.exit('FAIL: PRZI.calc_cdf() bad dirn\n')
+
+            if pmax < pmin:
+                # screwed
+                sys.exit('FAIL: pmax < pmin\n')
+
+            dxs = dirn * self.strat
+
+            if verbose:
+                print('calc_cdf_lut: dirn=%d dxs=%d pmin=%d pmax=%d\n' % (dirn, dxs, pmin, pmax))
+
+            p_range = float(pmax - pmin)
+            if p_range < 1:
+                # special case: the SHVR-style strategy has shaved all the way to the limit price
+                # the lower and upper bounds on the interval are adjacent prices;
+                # so cdf is simply the lower price with probability 1
+
+                cdf=[{'price':pmin, 'cum_prob': 1.0}]
+
+                if verbose:
+                    print('\n\ncdf:', cdf)
+
+                return {'strat': strat, 'dirn': dirn, 'pmin': pmin, 'pmax': pmax, 'cdf_lut': cdf}
+
+            c = threshold(t0, m * math.tan(math.pi * (strat + 0.5)))
+
+            # catch div0 errors here
+            if abs(c) < epsilon:
+                if c > 0:
+                    c = epsilon
+                else:
+                    c = -epsilon
+
+            e2cm1 = math.exp(c) - 1
+
+            # calculate the discrete calligraphic-P function over interval [pmin, pmax]
+            # (i.e., this is Equation 8 in the PRZI Technical Note)
+            calp_interval = []
+            calp_sum = 0
+            for p in range(pmin, pmax + 1):
+                p_r = (p - pmin) / (p_range)  # p_r in [0.0, 1.0]
+                if self.strat == 0.0:
+                    # special case: this is just ZIC
+                    cal_p = 1 / (p_range + 1)
+                elif self.strat > 0:
+                    cal_p = (math.exp(c * p_r) - 1.0) / e2cm1
+                else:  # self.strat < 0
+                    cal_p = 1.0 - ((math.exp(c * p_r) - 1.0) / e2cm1)
+                if cal_p < 0:
+                    cal_p = 0   # just in case
+                calp_interval.append({'price':p, "cal_p":cal_p})
+                calp_sum += cal_p
+
+            if calp_sum <= 0:
+                print('calp_interval:', calp_interval)
+                print('pmin=%f, pmax=%f, calp_sum=%f' % (pmin, pmax, calp_sum))
+
+            cdf = []
+            cum_prob = 0
+            # now go thru interval summing and normalizing to give the CDF
+            for p in range(pmin, pmax + 1):
+                price = calp_interval[p-pmin]['price']
+                cal_p = calp_interval[p-pmin]['cal_p']
+                prob = cal_p / calp_sum
+                cum_prob += prob
+                cdf.append({'price': p, 'cum_prob': cum_prob})
+
+            if verbose:
+                print('\n\ncdf:', cdf)
+
+            return {'strat':strat, 'dirn':dirn, 'pmin':pmin, 'pmax':pmax, 'cdf_lut':cdf}
+
+        verbose = False
+
+        if verbose:
+            print('PRZI getorder: strat=%f' % self.strat)
+
+        if len(self.orders) < 1:
+            # no orders: return NULL
+            order = None
+        else:
+            # unpack the assignment-order
+            limit = self.orders[0].price
+            otype = self.orders[0].otype
+
+            # get extreme limits on price interval
+            # lowest price the market will bear
+            minprice = int(lob['bids']['worst'])  # default assumption: worst bid price possible is 1 tick
+            # trader's individual estimate highest price the market will bear
+            if self.pmax is None:
+                maxprice = int(limit * self.pmax_c_i + 0.5) # in the absence of any other info, guess
+                self.pmax = maxprice
+            elif self.pmax < lob['asks']['sess_hi']:        # some other trader has quoted higher than I expected
+                maxprice = lob['asks']['sess_hi']           # so use that as my new estimate of highest
+                self.pmax = maxprice
+            else:
+                maxprice = self.pmax
+
+            # what price would a SHVR quote?
+            p_shvr = shvr_price(otype, limit, lob)
+
+            # it may be more efficient to detect the ZIC special case and generate a price directly
+            # whether it is or not depends on how many entries need to be sampled in the LUT reverse-lookup
+            # versus the compute time of the call to random.randint that would be used in direct ZIC
+            # here, for simplicity, we're not treating ZIC as a special case...
+            # ... so the full CDF LUT needs to be instantiated for ZIC (strat=0.0) just like any other strat value
+
+            # use the cdf look-up table
+            # cdf_lut is a list of little dictionaries
+            # each dictionary has form: {'cum_prob':nnn, 'price':nnn}
+            # generate u=U(0,1) uniform disrtibution
+            # starting with the lowest nonzero cdf value at cdf_lut[0],
+            # walk up the lut (i.e., examine higher cumulative probabilities),
+            # until we're in the range of u; then return the relevant price
+
+
+            # the LUTs are re-computed if any of the details have changed
+            if otype == 'Bid':
+
+                # direction * strat
+                dxs = -1 * self.strat  # the minus one multiplier is the "buy" direction
+
+                p_max = int(limit)
+                if dxs <= 0:
+                    p_min = minprice        # this is delta_p for BSE, i.e. ticksize =1
+                else:
+                    # shade the lower bound on the interval
+                    # away from minprice and toward shvr_price
+                    p_min = int(0.5 + (dxs * p_shvr) + ((1.0-dxs) * minprice))
+
+                if (self.cdf_lut_bid is None) or \
+                        (self.cdf_lut_bid['strat'] != self.strat) or\
+                        (self.cdf_lut_bid['pmin'] != p_min) or \
+                        (self.cdf_lut_bid['pmax'] != p_max):
+                    # need to compute a new LUT
+                    if verbose:
+                        print('New bid LUT')
+                    self.cdf_lut_bid = calc_cdf_lut(self.strat, self.theta0,
+                                                    self.m, -1, p_min, p_max)
+
+                lut = self.cdf_lut_bid
+
+            else:   # otype == 'Ask'
+
+                dxs = self.strat
+
+                p_min = int(limit)
+                if dxs <= 0:
+                    p_max = maxprice
+                else:
+                    # shade the upper bound on the interval
+                    # away from maxprice and toward shvr_price
+                    p_max = int(0.5 + (dxs * p_shvr) + ((1.0-dxs) * maxprice))
+
+                if (self.cdf_lut_ask is None) or \
+                        (self.cdf_lut_ask['strat'] != self.strat) or \
+                        (self.cdf_lut_ask['pmin'] != p_min) or \
+                        (self.cdf_lut_ask['pmax'] != p_max):
+                    # need to compute a new LUT
+                    if verbose:
+                        print('New ask LUT')
+                    self.cdf_lut_ask = calc_cdf_lut(self.strat, self.theta0,
+                                                    self.m, +1, p_min, p_max)
+
+                lut = self.cdf_lut_ask
+
+            if verbose:
+                print('PRZI LUT =', lut)
+
+            # do inverse lookup on the LUT to find the price
+            u = random.random()
+            for entry in lut['cdf_lut']:
+                if u < entry['cum_prob']:
+                    quoteprice = entry['price']
+                    break
+
+            order = Order(self.tid, otype,
+                          quoteprice, self.orders[0].qty, time, lob['QID'])
+
+            self.lastquote = order
+
+        return order    
+    
+    
 # Trader subclass ZIP
 # After Cliff 1997
 class Trader_ZIP(Trader):
@@ -826,6 +1071,8 @@ def populate_market(traders_spec, traders, shuffle, verbose):
             return Trader_Sniper('SNPR', name, 0.00, 0)
         elif robottype == 'ZIP':
             return Trader_ZIP('ZIP', name, 0.00, 0)
+        elif robottype == 'PRZI':
+            return Trader_PRZI('PRZI', name, 0.00, 0)
         else:
             sys.exit('FATAL: don\'t know robot type %s\n' % robottype)
 
