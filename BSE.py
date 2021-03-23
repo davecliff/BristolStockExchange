@@ -88,6 +88,7 @@ class Orderbook_half:
         self.best_price = None
         self.best_tid = None
         self.worstprice = worstprice
+        self.session_extreme = None    # most extreme price quoted in this session
         self.n_orders = 0  # how many orders?
         self.lob_depth = 0  # how many different prices on lob?
 
@@ -141,6 +142,11 @@ class Orderbook_half:
         # so, max of one order per trader per list
         # checks whether length or order list has changed, to distinguish addition/overwrite
         # print('book_add > %s %s' % (order, self.orders))
+        
+        # if this is an ask, does the price set a new extreme-high record?
+        if (self.booktype == 'Ask') and (order.price > self.session_extreme):
+            self.session_extreme = int(order.price)
+
         n_orders = self.n_orders
         self.orders[order.tid] = order
         self.n_orders = len(self.orders)
@@ -339,6 +345,7 @@ class Exchange(Orderbook):
                                'lob': self.bids.lob_anon}
         public_data['asks'] = {'best': self.asks.best_price,
                                'worst': self.asks.worstprice,
+                               'sess_hi': self.asks.session_extreme,
                                'n': self.asks.n_orders,
                                'lob': self.asks.lob_anon}
         public_data['QID'] = self.quote_id
