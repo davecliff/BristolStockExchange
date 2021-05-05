@@ -10,13 +10,13 @@ Nevertheless, because the BSE system is stochastic it can also be used to introd
 
 Real exchanges are much much more complicated than this. 
 
-If you use BSE in your work, please link back to this GitHub page for BSE so that people know where to find the original Python source-code: https://github.com/davecliff/BristolStockExchange
-and please also cite the peer-reviewed paper that describes BSE:
+If you use BSE in your work, please link back to this GitHub page for BSE so that people know where to find the original Python source-code: https://github.com/davecliff/BristolStockExchange, and please also cite the peer-reviewed paper that describes BSE:
  
 Cliff, D. (2018). BSE: A Minimal Simulation of a Limit-Order-Book Stock Exchange. In M. Affenzeller, et al. (Eds.), Proceedings 30th European Modeling and Simulation Symposium (EMSS 2018), pp. 194-203. DIME University of Genoa.
  
 Which you can download from here:
 https://research-information.bris.ac.uk/ws/portalfiles/portal/167944812/Cliff_i3M_CRC_formatted_repository.pdf
+
 or here:
 https://arxiv.org/abs/1809.06027
 
