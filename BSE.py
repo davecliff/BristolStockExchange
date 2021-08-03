@@ -697,14 +697,14 @@ class Trader_PRZI(Trader):
             # lowest price the market will bear
             minprice = int(lob['bids']['worst'])  # default assumption: worst bid price possible is 1 tick
             # trader's individual estimate highest price the market will bear
+            maxprice = self.pmax    # default assumption
             if self.pmax is None:
                 maxprice = int(limit * self.pmax_c_i + 0.5) # in the absence of any other info, guess
                 self.pmax = maxprice
-            elif self.pmax < lob['asks']['sess_hi']:        # some other trader has quoted higher than I expected
-                maxprice = lob['asks']['sess_hi']           # so use that as my new estimate of highest
-                self.pmax = maxprice
-            else:
-                maxprice = self.pmax
+            elif lob['asks']['sess_hi'] is not None:
+                if self.pmax < lob['asks']['sess_hi']:        # some other trader has quoted higher than I expected
+                    maxprice = lob['asks']['sess_hi']         # so use that as my new estimate of highest
+                    self.pmax = maxprice
 
             # what price would a SHVR quote?
             p_shvr = shvr_price(otype, limit, lob)
