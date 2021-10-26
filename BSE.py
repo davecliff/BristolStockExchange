@@ -1734,7 +1734,7 @@ def customer_orders(time, last_update, traders, trader_stats, os, pending, verbo
                 schedrange = sched['ranges']
                 mode = sched['stepmode']
                 got_one = True
-                exit  # jump out the loop -- so the first matching timezone has priority over any others
+                break  # jump out the loop -- so the first matching timezone has priority over any others
         if not got_one:
             sys.exit('Fail: time=%5.2f not within any timezone in os=%s' % (time, os))
         return (schedrange, mode)
