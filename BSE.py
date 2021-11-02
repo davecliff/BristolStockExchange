@@ -142,7 +142,7 @@ class Orderbook_half:
         # so, max of one order per trader per list
         # checks whether length or order list has changed, to distinguish addition/overwrite
         # print('book_add > %s %s' % (order, self.orders))
-        
+
         # if this is an ask, does the price set a new extreme-high record?
         if (self.booktype == 'Ask') and ((self.session_extreme is None) or (order.price > self.session_extreme)):
             self.session_extreme = int(order.price)
@@ -789,9 +789,9 @@ class Trader_PRZI(Trader):
 
             self.lastquote = order
 
-        return order    
-    
-    
+        return order
+
+
 # Trader subclass PRZI_SHC (ticker: PRSH)
 # added 23 Aug 2021
 # Dave Cliff's Parameterized-Response Zero-Intelligence (PRZI) trader
@@ -1243,7 +1243,7 @@ class Trader_PRZI_SHC(Trader):
 
                 # at this stage, strats_sorted[0] is our newly-chosen elite-strat, about to replicate
                 # record it
-                
+
 
                 # now replicate and mutate elite into all the other strats
                 for s in range(1, self.k):    # note range index starts at one not zero
@@ -1264,8 +1264,8 @@ class Trader_PRZI_SHC(Trader):
 
         else:
             sys.exit('FAIL: bad value for shc_algo')
-    
-     
+
+
 # Trader subclass ZIP
 # After Cliff 1997
 class Trader_ZIP(Trader):
@@ -1642,18 +1642,25 @@ def customer_orders(time, last_update, traders, trader_stats, os, pending, verbo
         return price
 
     def getorderprice(i, sched, n, mode, issuetime):
-        # does the first schedule range include optional dynamic offset function(s)?
-        if len(sched[0]) > 2:
-            offsetfn = sched[0][2]
+        if mode == 'random' and len(sched) > 1:
+            # random and more than one schedule: choose one equiprobably
+            s = random.randint(0, len(sched) - 1)
+        else:
+            # not random OR random but only 1 schedule: select the first
+            s = 0
+
+        # does the schedule range include optional dynamic offset function(s)?
+        if len(sched[s]) > 2:
+            offsetfn = sched[s][2]
             if callable(offsetfn):
                 # same offset for min and max
                 offset_min = offsetfn(issuetime)
                 offset_max = offset_min
             else:
                 sys.exit('FAIL: 3rd argument of sched in getorderprice() not callable')
-            if len(sched[0]) > 3:
+            if len(sched[s]) > 3:
                 # if second offset function is specfied, that applies only to the max value
-                offsetfn = sched[0][3]
+                offsetfn = sched[s][3]
                 if callable(offsetfn):
                     # this function applies to max
                     offset_max = offsetfn(issuetime)
@@ -1663,8 +1670,8 @@ def customer_orders(time, last_update, traders, trader_stats, os, pending, verbo
             offset_min = 0.0
             offset_max = 0.0
 
-        pmin = sysmin_check(offset_min + min(sched[0][0], sched[0][1]))
-        pmax = sysmax_check(offset_max + max(sched[0][0], sched[0][1]))
+        pmin = sysmin_check(offset_min + min(sched[s][0], sched[s][1]))
+        pmax = sysmax_check(offset_max + max(sched[s][0], sched[s][1]))
         prange = pmax - pmin
         stepsize = prange / (n - 1)
         halfstep = round(stepsize / 2.0)
@@ -1674,11 +1681,6 @@ def customer_orders(time, last_update, traders, trader_stats, os, pending, verbo
         elif mode == 'jittered':
             orderprice = pmin + int(i * stepsize) + random.randint(-halfstep, halfstep)
         elif mode == 'random':
-            if len(sched) > 1:
-                # more than one schedule: choose one equiprobably
-                s = random.randint(0, len(sched) - 1)
-                pmin = sysmin_check(min(sched[s][0], sched[s][1]))
-                pmax = sysmax_check(max(sched[s][0], sched[s][1]))
             orderprice = random.randint(pmin, pmax)
         else:
             sys.exit('FAIL: Unknown mode in schedule')
@@ -2030,4 +2032,3 @@ if __name__ == "__main__":
     # tdump.close()
     #
     # print(trialnumber)
-
