@@ -208,6 +208,7 @@ class Orderbook(Orderbook_half):
         self.bids = Orderbook_half('Bid', bse_sys_minprice)
         self.asks = Orderbook_half('Ask', bse_sys_maxprice)
         self.tape = []
+        self.tape_length = 1000 # maximum number of items on the tape 
         self.quote_id = 0  # unique ID code for each quote accepted onto the book
 
 
@@ -245,6 +246,7 @@ class Exchange(Orderbook):
                 self.bids.best_tid = None
             cancel_record = {'type': 'Cancel', 'time': time, 'order': order}
             self.tape.append(cancel_record)
+            self.tape = self.tape[-self.tape_length:]  # right-truncate the tape
 
         elif order.otype == 'Ask':
             self.asks.book_del(order)
@@ -257,6 +259,7 @@ class Exchange(Orderbook):
                 self.asks.best_tid = None
             cancel_record = {'type': 'Cancel', 'time': time, 'order': order}
             self.tape.append(cancel_record)
+            self.tape = self.tape[-self.tape_length:]  # right-truncate the tape
         else:
             # neither bid nor ask?
             sys.exit('bad order type in del_quote()')
@@ -320,6 +323,7 @@ class Exchange(Orderbook):
                                   'qty': order.qty
                                   }
             self.tape.append(transaction_record)
+            self.tape = self.tape[-self.tape_length:]  # right-truncate the tape
             return transaction_record
         else:
             return None
@@ -372,6 +376,7 @@ class Trader:
         self.tid = tid  # trader unique ID code
         self.balance = balance  # money in the bank
         self.blotter = []  # record of trades executed
+        self.blotter_length = 100  # maximum number of items held on a blotter
         self.orders = []  # customer orders currently being worked (fixed at 1)
         self.n_quotes = 0  # number of quotes live on LOB
         self.birthtime = time  # used when calculating age of a trader/strategy
@@ -409,6 +414,8 @@ class Trader:
             outstr = outstr + str(order)
 
         self.blotter.append(trade)  # add trade record to trader's blotter
+        self.blotter = self.blotter[-self.blotter_length:] # right-truncate to keep to length
+        
         # NB What follows is **LAZY** -- assumes all orders are quantity=1
         transactionprice = trade['price']
         if self.orders[0].otype == 'Bid':
@@ -1107,6 +1114,8 @@ class Trader_PRZI_SHC(Trader):
             outstr = outstr + str(order)
 
         self.blotter.append(trade)  # add trade record to trader's blotter
+        self.blotter = self.blotter[-self.blotter_length:] # right-truncate to keep to length
+        
         # NB What follows is **LAZY** -- assumes all orders are quantity=1
         transactionprice = trade['price']
         if self.orders[0].otype == 'Bid':
