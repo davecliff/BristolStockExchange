@@ -208,6 +208,7 @@ class Orderbook(Orderbook_half):
         self.bids = Orderbook_half('Bid', bse_sys_minprice)
         self.asks = Orderbook_half('Ask', bse_sys_maxprice)
         self.tape = []
+        self.tape_length = 1000 # maximum number of items on the tape 
         self.quote_id = 0  # unique ID code for each quote accepted onto the book
 
 
@@ -245,6 +246,7 @@ class Exchange(Orderbook):
                 self.bids.best_tid = None
             cancel_record = {'type': 'Cancel', 'time': time, 'order': order}
             self.tape.append(cancel_record)
+            self.tape = self.tape[-self.tape_length:]  # right-truncate the tape
 
         elif order.otype == 'Ask':
             self.asks.book_del(order)
@@ -257,6 +259,7 @@ class Exchange(Orderbook):
                 self.asks.best_tid = None
             cancel_record = {'type': 'Cancel', 'time': time, 'order': order}
             self.tape.append(cancel_record)
+            self.tape = self.tape[-self.tape_length:]  # right-truncate the tape
         else:
             # neither bid nor ask?
             sys.exit('bad order type in del_quote()')
@@ -320,6 +323,7 @@ class Exchange(Orderbook):
                                   'qty': order.qty
                                   }
             self.tape.append(transaction_record)
+            self.tape = self.tape[-self.tape_length:]  # right-truncate the tape
             return transaction_record
         else:
             return None
@@ -372,6 +376,7 @@ class Trader:
         self.tid = tid  # trader unique ID code
         self.balance = balance  # money in the bank
         self.blotter = []  # record of trades executed
+        self.blotter_length = 100  # maximum number of items held on a blotter
         self.orders = []  # customer orders currently being worked (fixed at 1)
         self.n_quotes = 0  # number of quotes live on LOB
         self.birthtime = time  # used when calculating age of a trader/strategy
@@ -409,6 +414,8 @@ class Trader:
             outstr = outstr + str(order)
 
         self.blotter.append(trade)  # add trade record to trader's blotter
+        self.blotter = self.blotter[-self.blotter_length:] # right-truncate to keep to length
+        
         # NB What follows is **LAZY** -- assumes all orders are quantity=1
         transactionprice = trade['price']
         if self.orders[0].otype == 'Bid':
@@ -834,9 +841,9 @@ class Trader_PRZI_SHC(Trader):
         self.theta0 = 100           # threshold-function limit value
         self.m = 4                  # tangent-function multiplier
         self.k = 4                  # number of hill-climbing points (cf number of arms on a multi-armed-bandit)
-        self.strat_wait_time = 900  # how many secs do we give any one strat before switching? todo: make this randomized withn some range
-        self.strat_range_min = 0.75 # lower-bound on randomly-assigned strategy-value
-        self.strat_range_max = 0.75 # upper-bound on randomly-assigned strategy-value
+        self.strat_wait_time = 900  # how many secs do we give any one strat before switching? 
+        self.strat_range_min = -1.0 # lower-bound on randomly-assigned strategy-value
+        self.strat_range_max = +1.0 # upper-bound on randomly-assigned strategy-value
         self.active_strat = 0       # which of the k strategies are we currently playing? -- start with 0
         self.prev_qid = None        # previous order i.d.
         self.strat_eval_time = self.k * self.strat_wait_time   # time to cycle through evaluating all k strategies
@@ -966,11 +973,11 @@ class Trader_PRZI_SHC(Trader):
             cum_prob = 0
             # now go thru interval summing and normalizing to give the CDF
             for p in range(pmin, pmax + 1):
-                price = calp_interval[p-pmin]['price'] # todo: what does this do?
+                price = calp_interval[p-pmin]['price'] 
                 cal_p = calp_interval[p-pmin]['cal_p']
                 prob = cal_p / calp_sum
                 cum_prob += prob
-                cdf.append({'price': p, 'cum_prob': cum_prob}) #todo shouldnt ths be "price" not "p"?
+                cdf.append({'price': p, 'cum_prob': cum_prob}) 
 
             if verbose:
                 print('\n\ncdf:', cdf)
@@ -1107,6 +1114,8 @@ class Trader_PRZI_SHC(Trader):
             outstr = outstr + str(order)
 
         self.blotter.append(trade)  # add trade record to trader's blotter
+        self.blotter = self.blotter[-self.blotter_length:] # right-truncate to keep to length
+        
         # NB What follows is **LAZY** -- assumes all orders are quantity=1
         transactionprice = trade['price']
         if self.orders[0].otype == 'Bid':
@@ -1126,9 +1135,8 @@ class Trader_PRZI_SHC(Trader):
         if verbose: print('%s profit=%d balance=%d profit/time=%d' % (outstr, profit, self.balance, self.profitpertime))
         self.del_order(order)  # delete the order
 
-        # Trader.bookkeep(self, trade, order, verbose, time) -- todo: calls all of the above?
-
-        # todo: expand from here
+        # Trader.bookkeep(self, trade, order, verbose, time) 
+        
 
         # Check: bookkeep is only called after a successful trade? i.e. no need to check re trade or not
 
@@ -1152,7 +1160,6 @@ class Trader_PRZI_SHC(Trader):
         # then the strats with the higher total accumulated profit is retained,
         # and mutated versions of it are copied into the other strats
         # then all counters are reset, and this is repeated indefinitely
-        # todo: add in other shc_algo that are cleverer than this,
         # e.g. inspired by multi-arm-bandit algos like like epsilon-greedy, softmax, or upper confidence bound (UCB)
 
         verbose = False
@@ -1177,8 +1184,8 @@ class Trader_PRZI_SHC(Trader):
             # this is based on time elapsed since last reset -- waiting for the current strategy to get a deal
             # -- otherwise a hopeless strategy can just sit there for ages doing nothing,
             # which would disadvantage the *other* strategies because they would never get a chance to score any profit.
-            # when a trader does a deal, clock is reset; todo check this!!!
-            # clock also reset when new a strat is created, obvs. todo check this!!! also check bookkeeping/proft etc
+            # when a trader does a deal, clock is reset; 
+            # clock also reset when new a strat is created, obvs. 
 
             # NB this *cycles* through the available strats in sequence
 
