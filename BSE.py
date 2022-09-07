@@ -2,11 +2,15 @@
 #
 # BSE: The Bristol Stock Exchange
 #
-# Version 1.4; 26 Oct 2020 (Python 3.x)
+
+# Version 1.7; September 2022 added PRDE
+# Version 1.6; September 2021 added PRSH
+# Version 1.5; 02 Jan 2021 -- was meant to be the final version before switch to BSE2.x, but that didn't happen :-)
+# Version 1.4; 26 Oct 2020 -- change to Python 3.x
 # Version 1.3; July 21st, 2018 (Python 2.x)
 # Version 1.2; November 17th, 2012 (Python 2.x)
 #
-# Copyright (c) 2012-2020, Dave Cliff
+# Copyright (c) 2012-2022, Dave Cliff
 #
 #
 # ------------------------
@@ -44,14 +48,16 @@
 #
 # NB this code has been written to be readable/intelligible, not efficient!
 
-# could import pylab here for graphing etc
-
 import sys
 import math
 import random
+import time as chrono
 
-bse_sys_minprice = 1  # minimum price in the system, in cents/pennies
-bse_sys_maxprice = 1000  # maximum price in the system, in cents/pennies
+# a bunch of system constants (globals)
+bse_sys_minprice = 1                    # minimum price in the system, in cents/pennies
+bse_sys_maxprice = 500                  # maximum price in the system, in cents/pennies
+# ticksize should be a param of an exchange (so different exchanges have different ticksizes)
+# todo: change this, so ticksize no longer global. 
 ticksize = 1  # minimum change in price, in cents/pennies
 
 
@@ -147,6 +153,7 @@ class Orderbook_half:
         if (self.booktype == 'Ask') and ((self.session_extreme is None) or (order.price > self.session_extreme)):
             self.session_extreme = int(order.price)
 
+        # add the order to the book
         n_orders = self.n_orders
         self.orders[order.tid] = order
         self.n_orders = len(self.orders)
@@ -208,8 +215,8 @@ class Orderbook(Orderbook_half):
         self.bids = Orderbook_half('Bid', bse_sys_minprice)
         self.asks = Orderbook_half('Ask', bse_sys_maxprice)
         self.tape = []
-        self.tape_length = 1000 # maximum number of items on the tape 
-        self.quote_id = 0  # unique ID code for each quote accepted onto the book
+        self.tape_length = 100      # max number of records on tape (so we can do millions of orders without crashing)
+        self.quote_id = 0           # unique ID code for each quote accepted onto the book
 
 
 # Exchange's internal orderbook
@@ -246,7 +253,9 @@ class Exchange(Orderbook):
                 self.bids.best_tid = None
             cancel_record = {'type': 'Cancel', 'time': time, 'order': order}
             self.tape.append(cancel_record)
-            self.tape = self.tape[-self.tape_length:]  # right-truncate the tape
+            # NB this just throws away the older items on the tape -- could instead dump to disk
+            # right-truncate the tape so it keeps only the most recent items
+            self.tape = self.tape[-self.tape_length:]
 
         elif order.otype == 'Ask':
             self.asks.book_del(order)
@@ -259,7 +268,9 @@ class Exchange(Orderbook):
                 self.asks.best_tid = None
             cancel_record = {'type': 'Cancel', 'time': time, 'order': order}
             self.tape.append(cancel_record)
-            self.tape = self.tape[-self.tape_length:]  # right-truncate the tape
+            # NB this just throws away the older items on the tape -- could instead dump to disk
+            # right-truncate the tape so it keeps only the most recent items
+            self.tape = self.tape[-self.tape_length:]
         else:
             # neither bid nor ask?
             sys.exit('bad order type in del_quote()')
@@ -323,7 +334,11 @@ class Exchange(Orderbook):
                                   'qty': order.qty
                                   }
             self.tape.append(transaction_record)
-            self.tape = self.tape[-self.tape_length:]  # right-truncate the tape
+            # NB this just throws away the older items on the tape -- could instead dump to disk
+            # right-truncate the tape so it keeps only the most recent items
+            self.tape = self.tape[-self.tape_length:]
+
+
             return transaction_record
         else:
             return None
@@ -331,6 +346,7 @@ class Exchange(Orderbook):
     # Currently tape_dump only writes a list of transactions (ignores cancellations)
     def tape_dump(self, fname, fmode, tmode):
         dumpfile = open(fname, fmode)
+        # dumpfile.write('type, time, price\n')
         for tapeitem in self.tape:
             if tapeitem['type'] == 'Trade':
                 dumpfile.write('Trd, %010.3f, %s\n' % (tapeitem['time'], tapeitem['price']))
@@ -371,22 +387,25 @@ class Exchange(Orderbook):
 # all Traders have a trader id, bank balance, blotter, and list of orders to execute
 class Trader:
 
-    def __init__(self, ttype, tid, balance, time):
-        self.ttype = ttype  # what type / strategy this trader is
-        self.tid = tid  # trader unique ID code
-        self.balance = balance  # money in the bank
-        self.blotter = []  # record of trades executed
-        self.blotter_length = 100  # maximum number of items held on a blotter
-        self.orders = []  # customer orders currently being worked (fixed at 1)
-        self.n_quotes = 0  # number of quotes live on LOB
-        self.birthtime = time  # used when calculating age of a trader/strategy
-        self.profitpertime = 0  # profit per unit time
-        self.n_trades = 0  # how many trades has this trader done?
-        self.lastquote = None  # record of what its last quote was
+    def __init__(self, ttype, tid, balance, params, time):
+        self.ttype = ttype          # what type / strategy this trader is
+        self.tid = tid              # trader unique ID code
+        self.balance = balance      # money in the bank
+        self.params = params        # parameters/extras associated with this trader-type or individual trader.
+        self.blotter = []           # record of trades executed
+        self.blotter_length = 100   # maximum length of blotter
+        self.orders = []            # customer orders currently being worked (fixed at 1)
+        self.n_quotes = 0           # number of quotes live on LOB
+        self.birthtime = time       # used when calculating age of a trader/strategy
+        self.profitpertime = 0      # profit per unit time
+        self.n_trades = 0           # how many trades has this trader done?
+        self.lastquote = None       # record of what its last quote was
+
 
     def __str__(self):
         return '[TID %s type %s balance %s blotter %s orders %s n_trades %s profitpertime %s]' \
                % (self.tid, self.ttype, self.balance, self.blotter, self.orders, self.n_trades, self.profitpertime)
+
 
     def add_order(self, order, verbose):
         # in this version, trader has at most one order,
@@ -402,10 +421,11 @@ class Trader:
             print('add_order < response=%s' % response)
         return response
 
+
     def del_order(self, order):
         # this is lazy: assumes each trader has only one customer order with quantity=1, so deleting sole order
-        # CHANGE TO DELETE THE HEAD OF THE LIST AND KEEP THE TAIL
         self.orders = []
+
 
     def bookkeep(self, trade, order, verbose, time):
 
@@ -415,7 +435,7 @@ class Trader:
 
         self.blotter.append(trade)  # add trade record to trader's blotter
         self.blotter = self.blotter[-self.blotter_length:] # right-truncate to keep to length
-        
+
         # NB What follows is **LAZY** -- assumes all orders are quantity=1
         transactionprice = trade['price']
         if self.orders[0].otype == 'Bid':
@@ -430,15 +450,17 @@ class Trader:
             print(profit)
             print(trade)
             print(order)
-            sys.exit()
+            sys.exit('FAIL: negative profit')
 
         if verbose: print('%s profit=%d balance=%d profit/time=%d' % (outstr, profit, self.balance, self.profitpertime))
         self.del_order(order)  # delete the order
+
 
     # specify how trader responds to events in the market
     # this is a null action, expect it to be overloaded by specific algos
     def respond(self, time, lob, trade, verbose):
         return None
+
 
     # specify how trader mutates its parameter values
     # this is a null action, expect it to be overloaded by specific algos
@@ -554,25 +576,139 @@ class Trader_Sniper(Trader):
         return order
 
 
-# Trader subclass PRZI
-# added 23 March 2021
-# Dave Cliff's Parameterized-Response Zero-Intelligence (PRZI) trader
-# see https://arxiv.org/abs/2103.11341
+# Trader subclass PRZI (ticker: PRSH)
+# added 6 Sep 2022 -- replaces old PRZI and PRZI_SHC, unifying them into one function and also adding PRDE
+#
+# Dave Cliff's Parameterized-Response Zero-Intelligence (PRZI) trader -- pronounced "prezzie"
+# but with added adaptive strategies, currently either...
+#   ++ a k-point Stochastic Hill-Climber (SHC) hence PRZI-SHC,
+#      PRZI-SHC pronounced "prezzy-shuck". Ticker symbol PRSH pronounced "purrsh";
+# or
+#   ++ a simple differential evolution (DE) optimizer with pop_size=k, hence PRZE-DE or PRDE ('purdy")
+#
+# when optimizer == None then it implements plain-vanilla non-adaptive PRZI, with a fixed strategy-value.
+
 class Trader_PRZI(Trader):
 
-    def __init__(self, ttype, tid, balance, time):
-        # PRZI strategy defined by parameter "strat"
-        # here this is randomly assigned
-        # strat * direction = -1 = > GVWY; =0 = > ZIC; =+1 = > SHVR
+    # how to mutate the strategy values when evolving / hill-climbing
+    def mutate_strat(self, s, mode):
+        s_min = self.strat_range_min
+        s_max = self.strat_range_max
+        if mode == 'gauss':
+            sdev = 0.05
+            newstrat = s
+            while newstrat == s:
+                newstrat = s + random.gauss(0.0, sdev)
+                # truncate to keep within range
+                newstrat = max(-1.0, min(1.0, newstrat))
+        elif mode == 'uniform_whole_range':
+            # draw uniformly from whole range
+            newstrat = random.uniform(-1.0, +1.0)
+        elif mode == 'uniform_bounded_range':
+            # draw uniformly from bounded range
+            newstrat = random.uniform(s_min, s_max)
+        else:
+            sys.exit('FAIL: bad mode in mutate_strat')
+        return newstrat
 
-        Trader.__init__(self, ttype, tid, balance, time)
+
+    def strat_str(self):
+        # pretty-print a string summarising this trader's strategies
+        string = '%s: %s active_strat=[%d]:\n' % (self.tid, self.ttype, self.active_strat)
+        for s in range(0, self.k):
+            strat = self.strats[s]
+            stratstr = '[%d]: s=%+f, start=%f, $=%f, pps=%f\n' % \
+                       (s, strat['stratval'], strat['start_t'], strat['profit'], strat['pps'])
+            string = string + stratstr
+
+        return string
+
+
+    def __init__(self, ttype, tid, balance, params, time):
+        # if params == "landscape-mapper" then it generates data for mapping the fitness landscape
+
+        verbose = True
+
+        Trader.__init__(self, ttype, tid, balance, params, time)
+
+        # unpack the params
+        if type(params) is dict:
+            k = params['k']
+            optimizer = params['optimizer']
+            s_min = params['strat_min']
+            s_max = params['strat_max']
+        else:
+            optimizer = None
+            s_min = 0.0
+            s_max = 0.0
+
+        self.optmzr = optimizer     # this determines whether it's PRZI, PRSH, or PRDE
+        self.k = k                  # number of sampling points (cf number of arms on a multi-armed-bandit, or pop-size)
         self.theta0 = 100           # threshold-function limit value
         self.m = 4                  # tangent-function multiplier
-        self.strat = 1.0 - 2 * random.random() # strategy parameter: must be in range [-1.0, +1.0]
-        self.cdf_lut_bid = None     # look-up table for buyer cumulative distribution function
-        self.cdf_lut_ask = None     # look-up table for buyer cumulative distribution function
+        self.strat_wait_time = 7200     # how many secs do we give any one strat before switching?
+        self.strat_range_min = s_min    # lower-bound on randomly-assigned strategy-value
+        self.strat_range_max = s_max    # upper-bound on randomly-assigned strategy-value
+        self.active_strat = 0       # which of the k strategies are we currently playing? -- start with 0
+        self.prev_qid = None        # previous order i.d.
+        self.strat_eval_time = self.k * self.strat_wait_time   # time to cycle through evaluating all k strategies
+        self.last_strat_change_time = time  # what time did we last change strategies?
+        self.profit_epsilon = 0.0 * random.random()    # minimum profit-per-sec difference between strategies that counts
+        self.strats = []            # strategies awaiting initialization
         self.pmax = None            # this trader's estimate of the maximum price the market will bear
         self.pmax_c_i = math.sqrt(random.randint(1,10))  # multiplier coefficient when estimating p_max
+        self.mapper_outfile = None
+        # differential evolution parameters all in one dictionary
+        self.diffevol = {'de_state': 'active_s0',          # initial state: strategy 0 is active (being evaluated)
+                         's0_index': self.active_strat,    # s0 starts out as active strat
+                         'snew_index': self.k,             # (k+1)th item of strategy list is DE's new strategy
+                         'snew_stratval': None,            # assigned later
+                         'F': 0.8                          # differential weight -- usually between 0 and 2
+        }
+
+        start_time = time
+        profit = 0.0
+        profit_per_second = 0
+        lut_bid = None
+        lut_ask = None
+
+        for s in range(self.k + 1):
+            # initialise each of the strategies in sequence: for PRSH, one random seed, then k-1 mutants of that seed
+            # for PRDE, use draws from uniform distbn over whole range
+            # the (k+1)th strategy is needed to hold s_new in differential evolution; it's not used in SHC.
+            if s == 0:
+                strategy = random.uniform(self.strat_range_min, self.strat_range_max)
+            else:
+                if self.optmzr == 'PRSH':
+                    # simple stochastic hill climber: cluster other strats around strat_0
+                    strategy = self.mutate_strat(self.strats[0]['stratval'], 'gauss')     # mutant of strats[0]
+                elif self.optmzr == 'PRDE':
+                    # differential evolution: seed initial strategies across whole space
+                    strategy = self.mutate_strat(self.strats[0]['stratval'], 'uniform_bounded_range')
+                else:
+                    sys.exit('bad self.optmzr when initializing PRZI strategies')
+            self.strats.append({'stratval': strategy, 'start_t': start_time,
+                                'profit': profit, 'pps': profit_per_second, 'lut_bid': lut_bid, 'lut_ask': lut_ask})
+
+        if self.params == 'landscape-mapper':
+            # replace seed+mutants set of strats with regularly-spaced strategy values over the whole range
+            self.strats = []
+            strategy_delta = 0.01
+            strategy = -1.0
+            k = 0
+            self.strats = []
+            while strategy <= +1.0:
+                self.strats.append({'stratval': strategy, 'start_t': start_time,
+                                    'profit': profit, 'pps': profit_per_second, 'lut_bid': lut_bid, 'lut_ask': lut_ask})
+                k += 1
+                strategy += strategy_delta
+            self.mapper_outfile = open('landscape_map.csv', 'w')
+            self.k = k
+            self.strat_eval_time = self.k * self.strat_wait_time
+
+        if verbose:
+            print("%s\n" % self.strat_str())
+
 
     def getorder(self, time, countdown, lob):
 
@@ -581,25 +717,30 @@ class Trader_PRZI(Trader):
 
             if otype == 'Bid':
                 if lob['bids']['n'] > 0:
-                    shvr_p = lob['bids']['best'] + 1   # BSE tick size is always 1
+                    shvr_p = lob['bids']['best'] + ticksize   # BSE ticksize is global var
                     if shvr_p > limit:
                         shvr_p = limit
                 else:
                     shvr_p = lob['bids']['worst']
             else:
                 if lob['asks']['n'] > 0:
-                    shvr_p = lob['asks']['best'] - 1   # BSE tick size is always 1
+                    shvr_p = lob['asks']['best'] - ticksize   # BSE ticksize is global var
                     if shvr_p < limit:
                         shvr_p = limit
                 else:
                     shvr_p = lob['asks']['worst']
 
+            # print('shvr_p=%f; ' % shvr_p)
             return shvr_p
+
 
         # calculate cumulative distribution function (CDF) look-up table (LUT)
         def calc_cdf_lut(strat, t0, m, dirn, pmin, pmax):
             # set parameter values and calculate CDF LUT
-            # dirn is direction: -1 for buy, +1 for sell
+            # strat is strategy-value in [-1,+1]
+            # t0 and m are constants used in the threshold function
+            # dirn is direction: 'buy' or 'sell'
+            # pmin and pmax are bounds on discrete-valued price-range
 
             # the threshold function used to clip
             def threshold(theta0, x):
@@ -611,28 +752,29 @@ class Trader_PRZI(Trader):
 
             if (strat > 1.0) or (strat < -1.0):
                 # out of range
-                sys.exit('FAIL: PRZI.getorder() self.strat out of range\n')
+                sys.exit('PRSH FAIL: strat=%f out of range\n' % strat)
 
-            if (dirn != 1.0) and (dirn != -1.0):
+            if (dirn != 'buy') and (dirn != 'sell'):
                 # out of range
-                sys.exit('FAIL: PRZI.calc_cdf() bad dirn\n')
+                sys.exit('PRSH FAIL: bad dirn=%s\n' % dirn)
 
             if pmax < pmin:
                 # screwed
-                sys.exit('FAIL: pmax < pmin\n')
-
-            dxs = dirn * self.strat
+                sys.exit('PRSH FAIL: pmax %f < pmin %f \n' % (pmax, pmin))
 
             if verbose:
-                print('calc_cdf_lut: dirn=%d dxs=%d pmin=%d pmax=%d\n' % (dirn, dxs, pmin, pmax))
+                print('PRSH calc_cdf_lut: strat=%f dirn=%d pmin=%d pmax=%d\n' % (strat, dirn, pmin, pmax))
 
             p_range = float(pmax - pmin)
             if p_range < 1:
                 # special case: the SHVR-style strategy has shaved all the way to the limit price
                 # the lower and upper bounds on the interval are adjacent prices;
-                # so cdf is simply the lower price with probability 1
+                # so cdf is simply the limit-price with probability 1
 
-                cdf=[{'price':pmin, 'cum_prob': 1.0}]
+                if dirn == 'buy':
+                    cdf = [{'price':pmax, 'cum_prob': 1.0}]
+                else: # must be a sell
+                    cdf = [{'price': pmin, 'cum_prob': 1.0}]
 
                 if verbose:
                     print('\n\ncdf:', cdf)
@@ -655,16 +797,25 @@ class Trader_PRZI(Trader):
             calp_interval = []
             calp_sum = 0
             for p in range(pmin, pmax + 1):
+                # normalize the price to proportion of its range
                 p_r = (p - pmin) / (p_range)  # p_r in [0.0, 1.0]
-                if self.strat == 0.0:
+                if strat == 0.0:
                     # special case: this is just ZIC
                     cal_p = 1 / (p_range + 1)
-                elif self.strat > 0:
-                    cal_p = (math.exp(c * p_r) - 1.0) / e2cm1
-                else:  # self.strat < 0
-                    cal_p = 1.0 - ((math.exp(c * p_r) - 1.0) / e2cm1)
+                elif strat > 0:
+                    if dirn == 'buy':
+                        cal_p = (math.exp(c * p_r) - 1.0) / e2cm1
+                    else:   # dirn == 'sell'
+                        cal_p = (math.exp(c * (1 - p_r)) - 1.0) / e2cm1
+                else:   # self.strat < 0
+                    if dirn == 'buy':
+                        cal_p = 1.0 - ((math.exp(c * p_r) - 1.0) / e2cm1)
+                    else:   # dirn == 'sell'
+                        cal_p = 1.0 - ((math.exp(c * (1 - p_r)) - 1.0) / e2cm1)
+
                 if cal_p < 0:
                     cal_p = 0   # just in case
+
                 calp_interval.append({'price':p, "cal_p":cal_p})
                 calp_sum += cal_p
 
@@ -676,7 +827,6 @@ class Trader_PRZI(Trader):
             cum_prob = 0
             # now go thru interval summing and normalizing to give the CDF
             for p in range(pmin, pmax + 1):
-                price = calp_interval[p-pmin]['price']
                 cal_p = calp_interval[p-pmin]['cal_p']
                 prob = cal_p / calp_sum
                 cum_prob += prob
@@ -690,304 +840,7 @@ class Trader_PRZI(Trader):
         verbose = False
 
         if verbose:
-            print('PRZI getorder: strat=%f' % self.strat)
-
-        if len(self.orders) < 1:
-            # no orders: return NULL
-            order = None
-        else:
-            # unpack the assignment-order
-            limit = self.orders[0].price
-            otype = self.orders[0].otype
-
-            # get extreme limits on price interval
-            # lowest price the market will bear
-            minprice = int(lob['bids']['worst'])  # default assumption: worst bid price possible is 1 tick
-            # trader's individual estimate highest price the market will bear
-            maxprice = self.pmax    # default assumption
-            if self.pmax is None:
-                maxprice = int(limit * self.pmax_c_i + 0.5) # in the absence of any other info, guess
-                self.pmax = maxprice
-            elif lob['asks']['sess_hi'] is not None:
-                if self.pmax < lob['asks']['sess_hi']:        # some other trader has quoted higher than I expected
-                    maxprice = lob['asks']['sess_hi']         # so use that as my new estimate of highest
-                    self.pmax = maxprice
-
-            # what price would a SHVR quote?
-            p_shvr = shvr_price(otype, limit, lob)
-
-            # it may be more efficient to detect the ZIC special case and generate a price directly
-            # whether it is or not depends on how many entries need to be sampled in the LUT reverse-lookup
-            # versus the compute time of the call to random.randint that would be used in direct ZIC
-            # here, for simplicity, we're not treating ZIC as a special case...
-            # ... so the full CDF LUT needs to be instantiated for ZIC (strat=0.0) just like any other strat value
-
-            # use the cdf look-up table
-            # cdf_lut is a list of little dictionaries
-            # each dictionary has form: {'cum_prob':nnn, 'price':nnn}
-            # generate u=U(0,1) uniform disrtibution
-            # starting with the lowest nonzero cdf value at cdf_lut[0],
-            # walk up the lut (i.e., examine higher cumulative probabilities),
-            # until we're in the range of u; then return the relevant price
-
-
-            # the LUTs are re-computed if any of the details have changed
-            if otype == 'Bid':
-
-                # direction * strat
-                dxs = -1 * self.strat  # the minus one multiplier is the "buy" direction
-
-                p_max = int(limit)
-                if dxs <= 0:
-                    p_min = minprice        # this is delta_p for BSE, i.e. ticksize =1
-                else:
-                    # shade the lower bound on the interval
-                    # away from minprice and toward shvr_price
-                    p_min = int(0.5 + (dxs * p_shvr) + ((1.0-dxs) * minprice))
-
-                if (self.cdf_lut_bid is None) or \
-                        (self.cdf_lut_bid['strat'] != self.strat) or\
-                        (self.cdf_lut_bid['pmin'] != p_min) or \
-                        (self.cdf_lut_bid['pmax'] != p_max):
-                    # need to compute a new LUT
-                    if verbose:
-                        print('New bid LUT')
-                    self.cdf_lut_bid = calc_cdf_lut(self.strat, self.theta0,
-                                                    self.m, -1, p_min, p_max)
-
-                lut = self.cdf_lut_bid
-
-            else:   # otype == 'Ask'
-
-                dxs = self.strat
-
-                p_min = int(limit)
-                if dxs <= 0:
-                    p_max = maxprice
-                else:
-                    # shade the upper bound on the interval
-                    # away from maxprice and toward shvr_price
-                    p_max = int(0.5 + (dxs * p_shvr) + ((1.0-dxs) * maxprice))
-
-                if (self.cdf_lut_ask is None) or \
-                        (self.cdf_lut_ask['strat'] != self.strat) or \
-                        (self.cdf_lut_ask['pmin'] != p_min) or \
-                        (self.cdf_lut_ask['pmax'] != p_max):
-                    # need to compute a new LUT
-                    if verbose:
-                        print('New ask LUT')
-                    self.cdf_lut_ask = calc_cdf_lut(self.strat, self.theta0,
-                                                    self.m, +1, p_min, p_max)
-
-                lut = self.cdf_lut_ask
-
-            if verbose:
-                print('PRZI LUT =', lut)
-
-            # do inverse lookup on the LUT to find the price
-            u = random.random()
-            for entry in lut['cdf_lut']:
-                if u < entry['cum_prob']:
-                    quoteprice = entry['price']
-                    break
-
-            order = Order(self.tid, otype,
-                          quoteprice, self.orders[0].qty, time, lob['QID'])
-
-            self.lastquote = order
-
-        return order
-
-
-# Trader subclass PRZI_SHC (ticker: PRSH)
-# added 23 Aug 2021
-# Dave Cliff's Parameterized-Response Zero-Intelligence (PRZI) trader
-# but with adaptive strategy, as a k-point stochastic hill-climber (SHC) hence PRZI-SHC.
-# PRZI-SHC pronounced "prezzy-shuck". Ticker symbol PRSH pronounced "purrsh".
-
-class Trader_PRZI_SHC(Trader):
-
-
-    # how to mutate the strategy values when hill-climbing
-    def mutate_strat(self, s):
-        sdev = 0.05
-        newstrat = s
-        while newstrat == s:
-            newstrat = s + random.gauss(0.0, sdev)
-            newstrat = max(-1.0, min(1.0, newstrat))
-        return newstrat
-
-
-    def strat_str(self):
-        # pretty-print a string summarising this trader's strategies
-        string = 'PRSH: %s active_strat=[%d]:\n' % (self.tid, self.active_strat)
-        for s in range(0, self.k):
-            strat = self.strats[s]
-            stratstr = '[%d]: s=%f, start=%f, $=%f, pps=%f\n' % \
-                       (s, strat['stratval'], strat['start_t'], strat['profit'], strat['pps'])
-            string = string + stratstr
-
-        return string
-
-
-    def __init__(self, ttype, tid, balance, time):
-        # PRZI strategy defined by parameter "strat"
-        # here this is randomly assigned
-        # strat * direction = -1 = > GVWY; =0 = > ZIC; =+1 = > SHVR
-
-        verbose = False
-
-        Trader.__init__(self, ttype, tid, balance, time)
-        self.theta0 = 100           # threshold-function limit value
-        self.m = 4                  # tangent-function multiplier
-        self.k = 4                  # number of hill-climbing points (cf number of arms on a multi-armed-bandit)
-        self.strat_wait_time = 900  # how many secs do we give any one strat before switching? 
-        self.strat_range_min = -1.0 # lower-bound on randomly-assigned strategy-value
-        self.strat_range_max = +1.0 # upper-bound on randomly-assigned strategy-value
-        self.active_strat = 0       # which of the k strategies are we currently playing? -- start with 0
-        self.prev_qid = None        # previous order i.d.
-        self.strat_eval_time = self.k * self.strat_wait_time   # time to cycle through evaluating all k strategies
-        self.last_strat_change_time = time  # what time did we last change strategies?
-        self.profit_epsilon = 0.01 * random.random()    # minimum profit-per-sec difference between strategies that counts
-        self.strats=[]              # strategies awaiting initialization
-        self.pmax = None            # this trader's estimate of the maximum price the market will bear
-        self.pmax_c_i = math.sqrt(random.randint(1,10))  # multiplier coefficient when estimating p_max
-
-        for s in range(0, self.k):
-            # initialise each of the strategies in sequence
-            start_time = time
-            profit = 0.0
-            profit_per_second = 0
-            lut_bid = None
-            lut_ask = None
-            if s == 0:
-                strategy = random.uniform(self.strat_range_min, self.strat_range_max)
-            else:
-                strategy = self.mutate_strat(self.strats[0]['stratval'])     # mutant of strats[0]
-            self.strats.append({'stratval': strategy, 'start_t': start_time,
-                                'profit': profit, 'pps': profit_per_second, 'lut_bid': lut_bid, 'lut_ask': lut_ask})
-
-        if verbose:
-            print("PRSH %s %s\n" % (tid, self.strat_str()))
-
-
-    def getorder(self, time, countdown, lob):
-
-        # shvr_price tells us what price a SHVR would quote in these circs
-        def shvr_price(otype, limit, lob):
-
-            if otype == 'Bid':
-                if lob['bids']['n'] > 0:
-                    shvr_p = lob['bids']['best'] + 1   # BSE tick size is always 1
-                    if shvr_p > limit:
-                        shvr_p = limit
-                else:
-                    shvr_p = lob['bids']['worst']
-            else:
-                if lob['asks']['n'] > 0:
-                    shvr_p = lob['asks']['best'] - 1   # BSE tick size is always 1
-                    if shvr_p < limit:
-                        shvr_p = limit
-                else:
-                    shvr_p = lob['asks']['worst']
-
-            return shvr_p
-
-        # calculate cumulative distribution function (CDF) look-up table (LUT)
-        def calc_cdf_lut(strat, t0, m, dirn, pmin, pmax):
-            # set parameter values and calculate CDF LUT
-            # dirn is direction: -1 for buy, +1 for sell
-
-            # the threshold function used to clip
-            def threshold(theta0, x):
-                t = max(-1*theta0, min(theta0, x))
-                return t
-
-            epsilon = 0.000001 #used to catch DIV0 errors
-            verbose = False
-
-            if (strat > 1.0) or (strat < -1.0):
-                # out of range
-                sys.exit('PRSH FAIL: PRZI.getorder() self.strat out of range\n')
-
-            if (dirn != 1.0) and (dirn != -1.0):
-                # out of range
-                sys.exit('PRSH FAIL: PRZI.calc_cdf() bad dirn\n')
-
-            if pmax < pmin:
-                # screwed
-                sys.exit('PRSH FAIL: pmax < pmin\n')
-
-            dxs = dirn * strat
-
-            if verbose:
-                print('PRSH calc_cdf_lut: dirn=%d dxs=%d pmin=%d pmax=%d\n' % (dirn, dxs, pmin, pmax))
-
-            p_range = float(pmax - pmin)
-            if p_range < 1:
-                # special case: the SHVR-style strategy has shaved all the way to the limit price
-                # the lower and upper bounds on the interval are adjacent prices;
-                # so cdf is simply the lower price with probability 1
-
-                cdf=[{'price':pmin, 'cum_prob': 1.0}]
-
-                if verbose:
-                    print('\n\ncdf:', cdf)
-
-                return {'strat': strat, 'dirn': dirn, 'pmin': pmin, 'pmax': pmax, 'cdf_lut': cdf}
-
-            c = threshold(t0, m * math.tan(math.pi * (strat + 0.5)))
-
-            # catch div0 errors here
-            if abs(c) < epsilon:
-                if c > 0:
-                    c = epsilon
-                else:
-                    c = -epsilon
-
-            e2cm1 = math.exp(c) - 1
-
-            # calculate the discrete calligraphic-P function over interval [pmin, pmax]
-            # (i.e., this is Equation 8 in the PRZI Technical Note)
-            calp_interval = []
-            calp_sum = 0
-            for p in range(pmin, pmax + 1):
-                p_r = (p - pmin) / (p_range)  # p_r in [0.0, 1.0]
-                if strat == 0.0:
-                    # special case: this is just ZIC
-                    cal_p = 1 / (p_range + 1)
-                elif strat > 0:
-                    cal_p = (math.exp(c * p_r) - 1.0) / e2cm1
-                else:  # self.strat < 0
-                    cal_p = 1.0 - ((math.exp(c * p_r) - 1.0) / e2cm1)
-                if cal_p < 0:
-                    cal_p = 0   # just in case
-                calp_interval.append({'price':p, "cal_p":cal_p})
-                calp_sum += cal_p
-
-            if calp_sum <= 0:
-                print('calp_interval:', calp_interval)
-                print('pmin=%f, pmax=%f, calp_sum=%f' % (pmin, pmax, calp_sum))
-
-            cdf = []
-            cum_prob = 0
-            # now go thru interval summing and normalizing to give the CDF
-            for p in range(pmin, pmax + 1):
-                price = calp_interval[p-pmin]['price'] 
-                cal_p = calp_interval[p-pmin]['cal_p']
-                prob = cal_p / calp_sum
-                cum_prob += prob
-                cdf.append({'price': p, 'cum_prob': cum_prob}) 
-
-            if verbose:
-                print('\n\ncdf:', cdf)
-
-            return {'strat':strat, 'dirn':dirn, 'pmin':pmin, 'pmax':pmax, 'cdf_lut':cdf}
-
-        verbose = False
-
-        if verbose:
-            print('t=%f PRSH getorder: %s, %s' % (time, self.tid, self.strat_str()))
+            print('t=%.1f PRSH getorder: %s, %s' % (time, self.tid, self.strat_str()))
 
         if len(self.orders) < 1:
             # no orders: return NULL
@@ -1009,7 +862,8 @@ class Trader_PRZI_SHC(Trader):
 
             # get extreme limits on price interval
             # lowest price the market will bear
-            minprice = int(lob['bids']['worst'])  # default assumption: worst bid price possible is 1 tick
+            minprice = int(lob['bids']['worst'])  # default assumption: worst bid price possible as defined by exchange
+
             # trader's individual estimate highest price the market will bear
             maxprice = self.pmax # default assumption
             if self.pmax is None:
@@ -1019,15 +873,6 @@ class Trader_PRZI_SHC(Trader):
                 if self.pmax < lob['asks']['sess_hi']:        # some other trader has quoted higher than I expected
                     maxprice = lob['asks']['sess_hi']         # so use that as my new estimate of highest
                     self.pmax = maxprice
-
-            # what price would a SHVR quote?
-            p_shvr = shvr_price(otype, limit, lob)
-
-            # it may be more efficient to detect the ZIC special case and generate a price directly
-            # whether it is or not depends on how many entries need to be sampled in the LUT reverse-lookup
-            # versus the compute time of the call to random.randint that would be used in direct ZIC
-            # here, for simplicity, we're not treating ZIC as a special case...
-            # ... so the full CDF LUT needs to be instantiated for ZIC (strat=0.0) just like any other strat value
 
             # use the cdf look-up table
             # cdf_lut is a list of little dictionaries
@@ -1039,18 +884,18 @@ class Trader_PRZI_SHC(Trader):
 
             strat = self.strats[self.active_strat]['stratval']
 
+            # what price would a SHVR quote?
+            p_shvr = shvr_price(otype, limit, lob)
+
             if otype == 'Bid':
 
-                # direction * strat
-                dxs = -1 * strat  # the minus one multiplier is the "buy" direction
-
                 p_max = int(limit)
-                if dxs <= 0:
-                    p_min = minprice        # this is delta_p for BSE, i.e. ticksize =1
+                if strat > 0.0:
+                    p_min = minprice
                 else:
                     # shade the lower bound on the interval
                     # away from minprice and toward shvr_price
-                    p_min = int(0.5 + (dxs * p_shvr) + ((1.0-dxs) * minprice))
+                    p_min = int(0.5 + (-strat * p_shvr) + ((1.0 + strat) * minprice))
 
                 lut_bid = self.strats[self.active_strat]['lut_bid']
                 if (lut_bid is None) or \
@@ -1060,21 +905,23 @@ class Trader_PRZI_SHC(Trader):
                     # need to compute a new LUT
                     if verbose:
                         print('New bid LUT')
-                    self.strats[self.active_strat]['lut_bid'] = calc_cdf_lut(strat, self.theta0, self.m, -1, p_min, p_max)
+                    self.strats[self.active_strat]['lut_bid'] = calc_cdf_lut(strat, self.theta0, self.m, 'buy', p_min, p_max)
 
                 lut = self.strats[self.active_strat]['lut_bid']
 
             else:   # otype == 'Ask'
 
-                dxs = strat
-
                 p_min = int(limit)
-                if dxs <= 0:
+                if strat > 0.0:
                     p_max = maxprice
                 else:
                     # shade the upper bound on the interval
                     # away from maxprice and toward shvr_price
-                    p_max = int(0.5 + (dxs * p_shvr) + ((1.0-dxs) * maxprice))
+                    p_max = int(0.5 + (-strat * p_shvr) + ((1.0 + strat) * maxprice))
+                    if p_max < p_min:
+                        # this should never happen, but just in case it does...
+                        p_max = p_min
+
 
                 lut_ask = self.strats[self.active_strat]['lut_ask']
                 if (lut_ask is None) or \
@@ -1084,15 +931,24 @@ class Trader_PRZI_SHC(Trader):
                     # need to compute a new LUT
                     if verbose:
                         print('New ask LUT')
-                    self.strats[self.active_strat]['lut_ask'] = calc_cdf_lut(strat, self.theta0, self.m, +1, p_min, p_max)
+                    self.strats[self.active_strat]['lut_ask'] = calc_cdf_lut(strat, self.theta0, self.m, 'sell', p_min, p_max)
 
                 lut = self.strats[self.active_strat]['lut_ask']
 
+                
+            verbose = False
             if verbose:
-                # print('PRZI LUT =', lut)
+                print('PRZI strat=%f LUT=%s \n \n' % (strat, lut))
+                # useful in debugging: print a table of lut: price and cum_prob, with the discrete derivative (gives PMF).
+                last_cprob = 0.0
+                for lut_entry in lut['cdf_lut']:
+                    cprob = lut_entry['cum_prob']
+                    print('%d, %f, %f' % (lut_entry['price'], cprob - last_cprob, cprob))
+                    last_cprob = cprob
+                print('\n');    
+                
                 # print ('[LUT print suppressed]')
-                dummy = 1
-
+            
             # do inverse lookup on the LUT to find the price
             u = random.random()
             for entry in lut['cdf_lut']:
@@ -1115,7 +971,7 @@ class Trader_PRZI_SHC(Trader):
 
         self.blotter.append(trade)  # add trade record to trader's blotter
         self.blotter = self.blotter[-self.blotter_length:] # right-truncate to keep to length
-        
+
         # NB What follows is **LAZY** -- assumes all orders are quantity=1
         transactionprice = trade['price']
         if self.orders[0].otype == 'Bid':
@@ -1135,16 +991,15 @@ class Trader_PRZI_SHC(Trader):
         if verbose: print('%s profit=%d balance=%d profit/time=%d' % (outstr, profit, self.balance, self.profitpertime))
         self.del_order(order)  # delete the order
 
-        # Trader.bookkeep(self, trade, order, verbose, time) 
-        
-
-        # Check: bookkeep is only called after a successful trade? i.e. no need to check re trade or not
-
-        # so ...
-        # if I have just traded and I am a PRSH trader
-        # then I want to reset the timer on the current strat and update its profit sum
-
         self.strats[self.active_strat]['profit'] += profit
+        time_alive = time - self.strats[self.active_strat]['start_t']
+        if time_alive > 0:
+            profit_per_second = self.strats[self.active_strat]['profit'] / time_alive
+            self.strats[self.active_strat]['pps'] = profit_per_second
+        else:
+            # if it trades at the instant it is born then it would have infinite profit-per-second, which is insane
+            # to keep things sensible whne time_alive == 0 we say the profit per second is whatever the actual profit is
+            self.strats[self.active_strat]['pps'] = profit
 
 
     # PRSH respond() asks/answers two questions
@@ -1152,28 +1007,39 @@ class Trader_PRZI_SHC(Trader):
     # do we need to dump one arm and generate a new one? (i.e., both/all arms have been evaluated enough)
     def respond(self, time, lob, trade, verbose):
 
-        shc_algo = 'basic'
-
-        # "basic" is a very basic form of stochastic hill-cliber (SHC) that v easy to understand and to code
+        # "PRSH" is a very basic form of stochastic hill-climber (SHC) that's v easy to understand and to code
         # it cycles through the k different strats until each has been operated for at least eval_time seconds
         # but a strat that does nothing will get swapped out if it's been running for no_deal_time without a deal
         # then the strats with the higher total accumulated profit is retained,
-        # and mutated versions of it are copied into the other strats
+        # and mutated versions of it are copied into the other k-1 strats
         # then all counters are reset, and this is repeated indefinitely
-        # e.g. inspired by multi-arm-bandit algos like like epsilon-greedy, softmax, or upper confidence bound (UCB)
+        #
+        # "PRDE" uses a basic form of Differential Evolution. This maintains a population of at least four strats
+        # iterates indefinitely on:
+        #       shuffle the set of strats;
+        #       name the first four strats s0 to s3;
+        #       create new_strat=s1+f*(s2-s3);
+        #       evaluate fitness of s0 and new_strat;
+        #       if (new_strat fitter than s0) then new_strat replaces s0.
+        #
+        # todo: add in other optimizer algorithms that are cleverer than these
+        #  e.g. inspired by multi-arm-bandit algos like like epsilon-greedy, softmax, or upper confidence bound (UCB)
 
         verbose = False
 
-        # first update each strategy's profit-per-second value -- this is the "fitness" of each strategy
+        # first update each strategy's profit-per-second (pps) value -- this is the "fitness" of each strategy
         for s in self.strats:
+            # debugging check: make profit be directly proportional to strategy, no noise
+            # s['profit'] = 100 * abs(s['stratval'])
+            # update pps
             pps_time = time - s['start_t']
             if pps_time > 0:
                 s['pps'] = s['profit'] / pps_time
             else:
-                s['pps'] = 0.0
+                s['pps'] = s['profit']
 
 
-        if shc_algo == 'basic':
+        if self.optmzr == 'PRSH':
 
             if verbose:
                 # print('t=%f %s PRSH respond: shc_algo=%s eval_t=%f max_wait_t=%f' %
@@ -1184,8 +1050,6 @@ class Trader_PRZI_SHC(Trader):
             # this is based on time elapsed since last reset -- waiting for the current strategy to get a deal
             # -- otherwise a hopeless strategy can just sit there for ages doing nothing,
             # which would disadvantage the *other* strategies because they would never get a chance to score any profit.
-            # when a trader does a deal, clock is reset; 
-            # clock also reset when new a strat is created, obvs. 
 
             # NB this *cycles* through the available strats in sequence
 
@@ -1207,9 +1071,9 @@ class Trader_PRZI_SHC(Trader):
 
             # code below here deals with creating a new set of k-1 mutants from the best of the k strats
 
+            # assume that all strats have had long enough, and search for evidence to the contrary
+            all_old_enough = True
             for s in self.strats:
-                # assume that all strats have had long enough, and search for evidence to the contrary
-                all_old_enough = True
                 lifetime = time - s['start_t']
                 if lifetime < self.strat_eval_time:
                     all_old_enough = False
@@ -1228,40 +1092,44 @@ class Trader_PRZI_SHC(Trader):
                         print('s=%f, start_t=%f, lifetime=%f, $=%f, pps=%f' %
                               (s['stratval'], s['start_t'], time-s['start_t'], s['profit'], s['pps']))
 
-                # if the difference between the top two strats is too close to call then flip a coin
-                # this is to prevent the same good strat being held constant simply by chance cos it is at index [0]
-                prof_diff = strats_sorted[0]['profit'] - strats_sorted[1]['profit']
-                if abs(prof_diff) < self.profit_epsilon:
-                    # they're too close to call, so just flip a coin
-                    best_strat = random.randint(0,1)
-                elif prof_diff > 0:
-                    best_strat = 0
+                if self.params == 'landscape-mapper':
+                    for s in self.strats:
+                        self.mapper_outfile.write('time, %f, strat, %f, pps, %f\n' %
+                              (time, s['stratval'], s['pps']))
+                    self.mapper_outfile.flush()
+                    sys.exit()
+
                 else:
-                    best_strat = 1
+                    # if the difference between the top two strats is too close to call then flip a coin
+                    # this is to prevent the same good strat being held constant simply by chance cos it is at index [0]
+                    best_strat = 0
+                    prof_diff = strats_sorted[0]['pps'] - strats_sorted[1]['pps']
+                    if abs(prof_diff) < self.profit_epsilon:
+                        # they're too close to call, so just flip a coin
+                        best_strat = random.randint(0,1)
 
-                if best_strat == 1:
-                    # need to swap strats[0] and strats[1]
-                    tmp_strat = strats_sorted[0]
-                    strats_sorted[0] = strats_sorted[1]
-                    strats_sorted[1] = tmp_strat
+                    if best_strat == 1:
+                        # need to swap strats[0] and strats[1]
+                        tmp_strat = strats_sorted[0]
+                        strats_sorted[0] = strats_sorted[1]
+                        strats_sorted[1] = tmp_strat
 
-                # the sorted list of strats replaces the existing list
-                self.strats = strats_sorted
+                    # the sorted list of strats replaces the existing list
+                    self.strats = strats_sorted
 
-                # at this stage, strats_sorted[0] is our newly-chosen elite-strat, about to replicate
-                # record it
+                    # at this stage, strats_sorted[0] is our newly-chosen elite-strat, about to replicate
 
-
-                # now replicate and mutate elite into all the other strats
-                for s in range(1, self.k):    # note range index starts at one not zero
-                    self.strats[s]['stratval'] = self.mutate_strat(self.strats[0]['stratval'])
-                    self.strats[s]['start_t'] = time
-                    self.strats[s]['profit'] = 0.0
-                    self.strats[s]['pps'] = 0.0
-                # and then update (wipe) records for the elite
-                self.strats[0]['start_t'] = time
-                self.strats[0]['profit'] = 0.0
-                self.strats[0]['pps'] = 0.0
+                    # now replicate and mutate the elite into all the other strats
+                    for s in range(1, self.k):    # note range index starts at one not zero (elite is at [0])
+                        self.strats[s]['stratval'] = self.mutate_strat(self.strats[0]['stratval'], 'gauss')
+                        self.strats[s]['start_t'] = time
+                        self.strats[s]['profit'] = 0.0
+                        self.strats[s]['pps'] = 0.0
+                    # and then update (wipe) records for the elite
+                    self.strats[0]['start_t'] = time
+                    self.strats[0]['profit'] = 0.0
+                    self.strats[0]['pps'] = 0.0
+                    self.active_strat = 0
 
                 if verbose:
                     print('%s: strat_eval_time=%f, MUTATED:' % (self.tid, self.strat_eval_time))
@@ -1269,12 +1137,114 @@ class Trader_PRZI_SHC(Trader):
                         print('s=%f start_t=%f, lifetime=%f, $=%f, pps=%f' %
                               (s['stratval'], s['start_t'], time-s['start_t'], s['profit'], s['pps']))
 
+        elif self.optmzr == 'PRDE':
+            # simple differential evolution
+
+            # only initiate diff-evol once the active strat has been evaluated for long enough
+            actv_lifetime = time - self.strats[self.active_strat]['start_t']
+            if actv_lifetime >= self.strat_wait_time:
+
+                if self.k < 4:
+                    sys.exit('FAIL: k too small for diffevol')
+
+                if self.diffevol['de_state'] == 'active_s0':
+                    # we've evaluated s0, so now we need to evaluate s_new
+                    self.active_strat = self.diffevol['snew_index']
+                    self.strats[self.active_strat]['start_t'] = time
+                    self.strats[self.active_strat]['profit'] = 0.0
+                    self.strats[self.active_strat]['pps'] = 0.0
+
+                    self.diffevol['de_state'] = 'active_snew'
+
+                elif self.diffevol['de_state'] == 'active_snew':
+                    # now we've evaluated s_0 and s_new, so we can do DE adaptive step
+                    if verbose:
+                        print('PRDE trader %s' % self.tid)
+                    i_0 = self.diffevol['s0_index']
+                    i_new = self.diffevol['snew_index']
+                    fit_0 = self.strats[i_0]['pps']
+                    fit_new = self.strats[i_new]['pps']
+
+                    if verbose:
+                        print('DiffEvol: t=%.1f, i_0=%d, i0fit=%f, i_new=%d, i_new_fit=%f' % (time, i_0, fit_0, i_new, fit_new))
+
+                    if fit_new >= fit_0:
+                        # new strat did better than old strat0, so overwrite new into strat0
+                        self.strats[i_0]['stratval'] = self.strats[i_new]['stratval']
+
+                    # do differential evolution
+
+                    # pick four individual strategies at random, but they must be distinct
+                    stratlist = list(range(0, self.k))    # create sequential list of strategy-numbers
+                    random.shuffle(stratlist)             # shuffle the list
+
+                    # s0 is next iteration's candidate for possible replacement
+                    self.diffevol['s0_index'] = stratlist[0]
+
+                    # s1, s2, s3 used in DE to create new strategy, potential replacement for s0
+                    s1_index = stratlist[1]
+                    s2_index = stratlist[2]
+                    s3_index = stratlist[3]
+
+                    # unpack the actual strategy values
+                    s1_stratval = self.strats[s1_index]['stratval']
+                    s2_stratval = self.strats[s2_index]['stratval']
+                    s3_stratval = self.strats[s3_index]['stratval']
+
+                    # this is the differential evolution "adaptive step": create a new individual
+                    new_stratval = s1_stratval + self.diffevol['F'] * (s2_stratval - s3_stratval)
+
+                    # clip to bounds
+                    new_stratval = max(-1, min(+1, new_stratval))
+
+                    # record it for future use (s0 will be evaluated first, then s_new)
+                    self.strats[self.diffevol['snew_index']]['stratval'] = new_stratval
+
+                    if verbose:
+                        print('DiffEvol: t=%.1f, s0=%d, s1=%d, (s=%+f), s2=%d, (s=%+f), s3=%d, (s=%+f), sNew=%+f' %
+                              (time, self.diffevol['s0_index'],
+                               s1_index, s1_stratval, s2_index, s2_stratval, s3_index, s3_stratval, new_stratval))
+
+                    # DC's intervention for fully converged populations
+                    # is the stddev of the strategies in the population equal/close to zero?
+                    sum = 0.0
+                    for s in range(self.k):
+                        sum += self.strats[s]['stratval']
+                    strat_mean = sum / self.k
+                    sumsq = 0.0
+                    for s in range(self.k):
+                        diff = self.strats[s]['stratval'] - strat_mean
+                        sumsq += (diff * diff)
+                    strat_stdev = math.sqrt(sumsq / self.k)
+                    if verbose:
+                        print('t=,%.1f, MeanStrat=, %+f, stdev=,%f' % (time, strat_mean, strat_stdev))
+                    if strat_stdev < 0.0001:
+                        # this population has converged
+                        # mutate one strategy at random
+                        randindex = random.randint(0, self.k - 1)
+                        self.strats[randindex]['stratval'] = random.uniform(-1.0, +1.0)
+                        if verbose:
+                            print('Converged pop: set strategy %d to %+f' % (randindex, self.strats[randindex]['stratval']))
+
+                    # set up next iteration: first evaluate s0
+                    self.active_strat = self.diffevol['s0_index']
+                    self.strats[self.active_strat]['start_t'] = time
+                    self.strats[self.active_strat]['profit'] = 0.0
+                    self.strats[self.active_strat]['pps'] = 0.0
+
+                    self.diffevol['de_state'] = 'active_s0'
+
+                else:
+                    sys.exit('FAIL: self.diffevol[\'de_state\'] not recognized')
+
+        elif self.optmzr is None:
+            # this is PRZI -- nonadaptive, no optimizer, nothing to change here.
+            pass
+
         else:
-            sys.exit('FAIL: bad value for shc_algo')
+            sys.exit('FAIL: bad value for self.optmzr')
 
 
-# Trader subclass ZIP
-# After Cliff 1997
 class Trader_ZIP(Trader):
 
     # ZIP init key param-values are those used in Cliff's 1997 original HP Labs tech report
@@ -1282,8 +1252,8 @@ class Trader_ZIP(Trader):
     #    so a single trader can both buy AND sell
     #    -- in the original, traders were either buyers OR sellers
 
-    def __init__(self, ttype, tid, balance, time):
-        Trader.__init__(self, ttype, tid, balance, time)
+    def __init__(self, ttype, tid, balance, params, time):
+        Trader.__init__(self, ttype, tid, balance, params, time)
         self.willing = 1
         self.able = 1
         self.job = None  # this gets switched to 'Bid' or 'Ask' depending on order-type
@@ -1438,7 +1408,7 @@ class Trader_ZIP(Trader):
                     target_price = target_up(tradeprice)
                     profit_alter(target_price)
                 elif ask_lifted and self.active and not willing_to_trade(tradeprice):
-                    # wouldnt have got this deal, still working order, so reduce margin
+                    # wouldn't have got this deal, still working order, so reduce margin
                     target_price = target_down(tradeprice)
                     profit_alter(target_price)
             else:
@@ -1459,7 +1429,7 @@ class Trader_ZIP(Trader):
                     target_price = target_down(tradeprice)
                     profit_alter(target_price)
                 elif bid_hit and self.active and not willing_to_trade(tradeprice):
-                    # wouldnt have got this deal, still working order, so reduce margin
+                    # wouldn't have got this deal, still working order, so reduce margin
                     target_price = target_up(tradeprice)
                     profit_alter(target_price)
             else:
@@ -1478,10 +1448,10 @@ class Trader_ZIP(Trader):
         self.prev_best_ask_q = lob_best_ask_q
 
 
-#########################---trader-types have all been defined now--################
+# ########################---trader-types have all been defined now--################
 
 
-##########################---Below lies the experiment/test-rig---##################
+# #########################---Below lies the experiment/test-rig---##################
 
 
 # trade_stats()
@@ -1541,21 +1511,28 @@ def trade_stats(expid, traders, dumpfile, time, lob):
 # returns tuple (n_buyers, n_sellers)
 # optionally shuffles the pack of buyers and the pack of sellers
 def populate_market(traders_spec, traders, shuffle, verbose):
-    def trader_type(robottype, name):
+    # traders_spec is a list of buyer-specs and a list of seller-specs
+    # each spec is (<trader type>, <number of this type of trader>, optionally: <params for this type of trader>)
+
+    def trader_type(robottype, name, parameters):
+        balance = 0.00
+        time0 = 0
         if robottype == 'GVWY':
-            return Trader_Giveaway('GVWY', name, 0.00, 0)
+            return Trader_Giveaway('GVWY', name, balance, parameters, time0)
         elif robottype == 'ZIC':
-            return Trader_ZIC('ZIC', name, 0.00, 0)
+            return Trader_ZIC('ZIC', name, balance, parameters, time0)
         elif robottype == 'SHVR':
-            return Trader_Shaver('SHVR', name, 0.00, 0)
+            return Trader_Shaver('SHVR', name, balance, parameters, time0)
         elif robottype == 'SNPR':
-            return Trader_Sniper('SNPR', name, 0.00, 0)
+            return Trader_Sniper('SNPR', name, balance, parameters, time0)
         elif robottype == 'ZIP':
-            return Trader_ZIP('ZIP', name, 0.00, 0)
+            return Trader_ZIP('ZIP', name, balance, parameters, time0)
         elif robottype == 'PRZI':
-            return Trader_PRZI('PRZI', name, 0.00, 0)
+            return Trader_PRZI('PRZI', name, balance, parameters, time0)
         elif robottype == 'PRSH':
-            return Trader_PRZI_SHC('PRSH', name, 0.00, 0)
+            return Trader_PRZI('PRSH', name, balance, parameters, time0)
+        elif robottype == 'PRDE':
+            return Trader_PRZI('PRDE', name, balance, parameters, time0)
         else:
             sys.exit('FATAL: don\'t know robot type %s\n' % robottype)
 
@@ -1571,12 +1548,41 @@ def populate_market(traders_spec, traders, shuffle, verbose):
             traders[t1name] = traders[t2name]
             traders[t2name] = temp
 
+    def unpack_params(trader_params, mapping):
+        # unpack the parameters for PRZI-family of strategies
+        parameters = None
+        if ttype == 'PRSH' or ttype == 'PRDE' or ttype == 'PRZI':
+            # parameters matter...
+            if mapping:
+                parameters = 'landscape-mapper'
+            else:
+                # params determines type of optimizer used
+                if ttype == 'PRSH':
+                    parameters = {'optimizer': 'PRSH', 'k': trader_params['k'],
+                                  'strat_min': trader_params['s_min'], 'strat_max': trader_params['s_max']}
+                elif ttype == 'PRDE':
+                    parameters = {'optimizer': 'PRDE', 'k': trader_params['k'],
+                                  'strat_min': trader_params['s_min'], 'strat_max': trader_params['s_max']}
+                else: # ttype=PRZI
+                    parameters = {'optimizer': None, 'k': 1,
+                                  'strat_min': trader_params['s_min'], 'strat_max': trader_params['s_max']}
+
+        return parameters
+
+    landscape_mapping = False   # set to true when mapping fitness landscape (for PRSH etc).
+
+    # the code that follows is a bit of a kludge, needs tidying up.
     n_buyers = 0
     for bs in traders_spec['buyers']:
         ttype = bs[0]
         for b in range(bs[1]):
             tname = 'B%02d' % n_buyers  # buyer i.d. string
-            traders[tname] = trader_type(ttype, tname)
+            if len(bs) > 2:
+                # third part of the buyer-spec is params for this trader-type
+                params = unpack_params(bs[2], landscape_mapping)
+            else:
+                params = unpack_params(None, landscape_mapping)
+            traders[tname] = trader_type(ttype, tname, params)
             n_buyers = n_buyers + 1
 
     if n_buyers < 1:
@@ -1590,7 +1596,12 @@ def populate_market(traders_spec, traders, shuffle, verbose):
         ttype = ss[0]
         for s in range(ss[1]):
             tname = 'S%02d' % n_sellers  # buyer i.d. string
-            traders[tname] = trader_type(ttype, tname)
+            if len(ss) > 2:
+                # third part of the buyer-spec is params for this trader-type
+                params = unpack_params(ss[2], landscape_mapping)
+            else:
+                params = unpack_params(None, landscape_mapping)
+            traders[tname] = trader_type(ttype, tname, params)
             n_sellers = n_sellers + 1
 
     if n_sellers < 1:
@@ -1636,6 +1647,7 @@ def populate_market(traders_spec, traders, shuffle, verbose):
 
 
 def customer_orders(time, last_update, traders, trader_stats, os, pending, verbose):
+
     def sysmin_check(price):
         if price < bse_sys_minprice:
             print('WARNING: price < bse_sys_min -- clipped')
@@ -1649,25 +1661,18 @@ def customer_orders(time, last_update, traders, trader_stats, os, pending, verbo
         return price
 
     def getorderprice(i, sched, n, mode, issuetime):
-        if mode == 'random' and len(sched) > 1:
-            # random and more than one schedule: choose one equiprobably
-            s = random.randint(0, len(sched) - 1)
-        else:
-            # not random OR random but only 1 schedule: select the first
-            s = 0
-
-        # does the schedule range include optional dynamic offset function(s)?
-        if len(sched[s]) > 2:
-            offsetfn = sched[s][2]
+        # does the first schedule range include optional dynamic offset function(s)?
+        if len(sched[0]) > 2:
+            offsetfn = sched[0][2]
             if callable(offsetfn):
                 # same offset for min and max
                 offset_min = offsetfn(issuetime)
                 offset_max = offset_min
             else:
                 sys.exit('FAIL: 3rd argument of sched in getorderprice() not callable')
-            if len(sched[s]) > 3:
+            if len(sched[0]) > 3:
                 # if second offset function is specfied, that applies only to the max value
-                offsetfn = sched[s][3]
+                offsetfn = sched[0][3]
                 if callable(offsetfn):
                     # this function applies to max
                     offset_max = offsetfn(issuetime)
@@ -1677,8 +1682,8 @@ def customer_orders(time, last_update, traders, trader_stats, os, pending, verbo
             offset_min = 0.0
             offset_max = 0.0
 
-        pmin = sysmin_check(offset_min + min(sched[s][0], sched[s][1]))
-        pmax = sysmax_check(offset_max + max(sched[s][0], sched[s][1]))
+        pmin = sysmin_check(offset_min + min(sched[0][0], sched[0][1]))
+        pmax = sysmax_check(offset_max + max(sched[0][0], sched[0][1]))
         prange = pmax - pmin
         stepsize = prange / (n - 1)
         halfstep = round(stepsize / 2.0)
@@ -1688,6 +1693,11 @@ def customer_orders(time, last_update, traders, trader_stats, os, pending, verbo
         elif mode == 'jittered':
             orderprice = pmin + int(i * stepsize) + random.randint(-halfstep, halfstep)
         elif mode == 'random':
+            if len(sched) > 1:
+                # more than one schedule: choose one equiprobably
+                s = random.randint(0, len(sched) - 1)
+                pmin = sysmin_check(min(sched[s][0], sched[s][1]))
+                pmax = sysmax_check(max(sched[s][0], sched[s][1]))
             orderprice = random.randint(pmin, pmax)
         else:
             sys.exit('FAIL: Unknown mode in schedule')
@@ -1768,7 +1778,7 @@ def customer_orders(time, last_update, traders, trader_stats, os, pending, verbo
             issuetime = time + issuetimes[t]
             tname = 'B%02d' % t
             orderprice = getorderprice(t, sched, n_buyers, mode, issuetime)
-            order = Order(tname, ordertype, orderprice, 1, issuetime, -3.14)
+            order = Order(tname, ordertype, orderprice, 1, issuetime, chrono.time())
             new_pending.append(order)
 
         # supply side (sellers)
@@ -1779,7 +1789,8 @@ def customer_orders(time, last_update, traders, trader_stats, os, pending, verbo
             issuetime = time + issuetimes[t]
             tname = 'S%02d' % t
             orderprice = getorderprice(t, sched, n_sellers, mode, issuetime)
-            order = Order(tname, ordertype, orderprice, 1, issuetime, -3.14)
+            # print('time %d sellerprice %d' % (time,orderprice))
+            order = Order(tname, ordertype, orderprice, 1, issuetime, chrono.time())
             new_pending.append(order)
     else:
         # there are pending future orders: issue any whose timestamp is in the past
@@ -1806,12 +1817,67 @@ def customer_orders(time, last_update, traders, trader_stats, os, pending, verbo
 # one session in the market
 def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, tdump, dump_all, verbose):
 
+
+    def dump_strats_frame(time, stratfile, trdrs):
+        # write one frame of strategy snapshot
+
+        line_str = 't=,%.0f, ' % time
+
+        best_buyer_id = None
+        best_buyer_prof = 0
+        best_buyer_strat = 0
+        best_seller_id = None
+        best_seller_prof = 0
+        best_seller_strat = 0
+
+        for t in traders:
+            trader = trdrs[t]
+
+            # print('PRSH/PRDE recording, t=%s' % trader)
+            if trader.ttype == 'PRSH' or trader.ttype == 'PRDE':
+                line_str += 'id=,%s, %s,' % (trader.tid, trader.ttype)
+
+                # line_str += 'bal=$,%f, n_trades=,%d, n_strats=,2, ' % (trader.balance, trader.n_trades)
+
+                act_strat = trader.strats[trader.active_strat]['stratval']
+                act_prof = trader.strats[trader.active_strat]['pps']
+
+                line_str += 'actvstrat=,%f, ' % act_strat
+                line_str += 'actvprof=,%f, ' % act_prof
+
+                if trader.tid[:1] == 'B':
+                    # this trader is a buyer
+                    if best_buyer_id is None or act_prof > best_buyer_prof:
+                        best_buyer_id = trader.tid
+                        best_buyer_strat = act_strat
+                        best_buyer_prof = act_prof
+                elif trader.tid[:1] == 'S':
+                    # this trader is a seller
+                    if best_seller_id is None or act_prof > best_seller_prof:
+                        best_seller_id = trader.tid
+                        best_seller_strat = act_strat
+                        best_seller_prof = act_prof
+                else:
+                    # wtf?
+                    sys.exit('unknown trader id type in market_session')
+
+        line_str += 'best_B_id=,%s, best_B_prof=,%f, best_B_strat=,%f, ' % \
+                    (best_buyer_id, best_buyer_prof, best_buyer_strat)
+        line_str += 'best_S_id=,%s, best_S_prof=,%f, best_S_strat=,%f, ' % \
+                    (best_seller_id, best_seller_prof, best_seller_strat)
+        line_str += '\n'
+        stratfile.write(line_str)
+        stratfile.flush()
+
+
     orders_verbose = False
     lob_verbose = False
     process_verbose = False
     respond_verbose = False
     bookkeep_verbose = False
     populate_verbose = False
+
+    strat_dump = open(sess_id + '_strats.csv', 'w')
 
     # initialise the exchange
     exchange = Exchange()
@@ -1834,6 +1900,9 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, tdu
 
     if verbose:
         print('\n%s;  ' % sess_id)
+
+    # frames_done is record of what frames we have printed data for thus far
+    frames_done = set()
 
     while time < endtime:
 
@@ -1886,9 +1955,20 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, tdu
                 # sequence (rather than random/shuffle) isn't a problem
                 traders[t].respond(time, lob, trade, respond_verbose)
 
+            # log all the PRSH/PRD/etc strategy info for this timestep?
+            frame_rate = 60 * 60     # print one frame every this many simulated seconds
+
+            if int(time) % frame_rate == 0 and int(time) not in frames_done:
+                # print one more frame to strategy dumpfile
+                dump_strats_frame(time, strat_dump, traders)
+                # record that we've written this frame
+                frames_done.add(int(time))
+
         time = time + timestep
 
     # session has ended
+
+    strat_dump.close()
 
     if dump_all:
 
@@ -1911,14 +1991,15 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, tdu
 
 #############################
 
-# # Below here is where we set up and run a series of experiments
+# # Below here is where we set up and run a whole series of experiments
 
 
 if __name__ == "__main__":
 
     # set up common parameters for all market sessions
+    n_days = 1095 # 1000 days is good, but 3*365=1095, so may as well go for three years.
     start_time = 0.0
-    end_time = 600.0
+    end_time = 60.0 * 60.0 * 24 * n_days
     duration = end_time - start_time
 
 
@@ -1936,7 +2017,7 @@ if __name__ == "__main__":
     # Here is an example of how to use the offset function
     #
     # range1 = (10, 190, schedule_offsetfn)
-    # range2 = (200,300, schedule_offsetfn)
+    # range2 = (200, 300, schedule_offsetfn)
 
     # Here is an example of how to switch from range1 to range2 and then back to range1,
     # introducing two "market shocks"
@@ -1950,51 +2031,68 @@ if __name__ == "__main__":
 
     # The code below sets up symmetric supply and demand curves at prices from 50 to 150, P0=100
 
-    range1 = (50, 150)
-    supply_schedule = [{'from': start_time, 'to': end_time, 'ranges': [range1], 'stepmode': 'fixed'}
-                       ]
+    range1 = (60, 60)
+    supply_schedule = [{'from': start_time, 'to': end_time, 'ranges': [range1], 'stepmode': 'fixed'}]
 
-    range2 = (50, 150)
-    demand_schedule = [{'from': start_time, 'to': end_time, 'ranges': [range2], 'stepmode': 'fixed'}
-                       ]
+    range2 = (100, 100)
+    demand_schedule = [{'from': start_time, 'to': end_time, 'ranges': [range2], 'stepmode': 'fixed'}]
+
+    # The code below sets up flat (perfectly elastic) supply and demand curves at prices of 50 and 150, P0=100
+
+    #range1 = (60, 60)
+    #supply_schedule = [{'from': start_time, 'to': end_time, 'ranges': [range1], 'stepmode': 'fixed'}]
+
+    #range2 = (140, 140)
+    #demand_schedule = [{'from': start_time, 'to': end_time, 'ranges': [range2], 'stepmode': 'fixed'}]
+
+    # new customer orders arrive at each trader approx once every order_interval seconds
+    order_interval = 5
 
     order_sched = {'sup': supply_schedule, 'dem': demand_schedule,
-                   'interval': 30, 'timemode': 'drip-poisson'}
+                   'interval': order_interval, 'timemode': 'drip-poisson'}
+
     # Use 'periodic' if you want the traders' assignments to all arrive simultaneously & periodically
-    #               'interval': 30, 'timemode': 'periodic'}
+    #               'order_interval': 30, 'timemode': 'periodic'}
 
-    buyers_spec = [('GVWY',10),('SHVR',10),('ZIC',10),('ZIP',10)]
-    sellers_spec = [('GVWY',10),('SHVR',10),('ZIC',10),('ZIP',10)]
+    # buyers_spec = [('GVWY',10),('SHVR',10),('ZIC',10),('ZIP',10)]
+    # sellers_spec = [('GVWY',10),('SHVR',10),('ZIC',10),('ZIP',10)]
 
-    traders_spec = {'sellers':sellers_spec, 'buyers':buyers_spec}
+    opponent = 'GVWY'
+    opp_N = 30
+#    sellers_spec = [('PRSH', 30),(opponent, opp_N-1)]
+#    buyers_spec = [(opponent, opp_N)]
+
+    sellers_spec = [('PRSH', 5, {'k': 4, 's_min': -1.0, 's_max': +1.0}),
+                    ('PRDE', 5, {'k': 4, 's_min': -1.0, 's_max': +1.0})]
+    buyers_spec = sellers_spec
+
+    traders_spec = {'sellers': sellers_spec, 'buyers': buyers_spec}
 
     # run a sequence of trials, one session per trial
 
     verbose = True
 
     # n_trials is how many trials (i.e. market sessions) to run in total
-    n_trials = 6
+    n_trials = 10
 
     # n_recorded is how many trials (i.e. market sessions) to write full data-files for
-    n_trials_recorded = 3
-
-    tdump=open('avg_balance.csv','w')
+    n_trials_recorded = 0
 
     trial = 1
 
     while trial < (n_trials+1):
-        trial_id = 'sess%04d' % trial
+        # create unique i.d. string for this trial
+        trial_id = 'bse_d%03d_i%02d_%04d' % (n_days, order_interval, trial)
 
         if trial > n_trials_recorded:
             dump_all = False
         else:
             dump_all = True
 
+        tdump = open(trial_id + '_avg_balance.csv', 'w')
         market_session(trial_id, start_time, end_time, traders_spec, order_sched, tdump, dump_all, verbose)
-        tdump.flush()
+        tdump.close()
         trial = trial + 1
-
-    tdump.close()
 
     # run a sequence of trials that exhaustively varies the ratio of four trader types
     # NB this has weakness of symmetric proportions on buyers/sellers -- combinatorics of varying that are quite nasty
@@ -2039,3 +2137,4 @@ if __name__ == "__main__":
     # tdump.close()
     #
     # print(trialnumber)
+
