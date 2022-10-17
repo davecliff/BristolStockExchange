@@ -217,6 +217,7 @@ class Orderbook(Orderbook_half):
         self.tape = []
         self.tape_length = 100      # max number of records on tape (so we can do millions of orders without crashing)
         self.quote_id = 0           # unique ID code for each quote accepted onto the book
+        self.lob_string = ''        # character-string linearization of public lob items with nonzero quantities
 
 
 # Exchange's internal orderbook
@@ -356,7 +357,7 @@ class Exchange(Orderbook):
 
     # this returns the LOB data "published" by the exchange,
     # i.e., what is accessible to the traders
-    def publish_lob(self, time, verbose):
+    def publish_lob(self, time, lob_file, verbose):
         public_data = {}
         public_data['time'] = time
         public_data['bids'] = {'best': self.bids.best_price,
@@ -370,6 +371,36 @@ class Exchange(Orderbook):
                                'lob': self.asks.lob_anon}
         public_data['QID'] = self.quote_id
         public_data['tape'] = self.tape
+
+        if lob_file is not None:
+            # build a linear character-string summary of only those prices on LOB with nonzero quantities
+            lobstring ='Bid:,'
+            n_bids = len(self.bids.lob_anon)
+            if n_bids > 0:
+                lobstring += '%d,' % n_bids
+                for lobitem in self.bids.lob_anon:
+                    price_str = '%d,' % lobitem[0]
+                    qty_str = '%d,' % lobitem[1]
+                    lobstring = lobstring + price_str + qty_str
+            else:
+                lobstring += '0,'
+            lobstring += 'Ask:,'
+            n_asks = len(self.asks.lob_anon)
+            if n_asks > 0:
+                lobstring += '%d,' % n_asks
+                for lobitem in self.asks.lob_anon:
+                    price_str = '%d,' % lobitem[0]
+                    qty_str = '%d,' % lobitem[1]
+                    lobstring = lobstring + price_str + qty_str
+            else:
+                lobstring += '0,'
+            # is this different to the last lob_string?
+            if lobstring != self.lob_string:
+                # write it
+                lob_file.write('%.3f, %s\n' % (time, lobstring))
+                # remember it
+                self.lob_string = lobstring
+
         if verbose:
             print('publish_lob: t=%d' % time)
             print('BID_lob=%s' % public_data['bids']['lob'])
@@ -1495,15 +1526,6 @@ def trade_stats(expid, traders, dumpfile, time, lob):
         s = trader_types[ttype]['balance_sum']
         dumpfile.write('%s, %d, %d, %f, ' % (ttype, s, n, s / float(n)))
 
-    if lob['bids']['best'] is not None:
-        dumpfile.write('%d, ' % (lob['bids']['best']))
-    else:
-        dumpfile.write('N, ')
-    if lob['asks']['best'] is not None:
-        dumpfile.write('%d, ' % (lob['asks']['best']))
-    else:
-        dumpfile.write('N, ')
-
     dumpfile.write('\n')
 
 
@@ -1815,7 +1837,7 @@ def customer_orders(time, last_update, traders, trader_stats, os, pending, verbo
 
 
 # one session in the market
-def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, tdump, dump_all, verbose):
+def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, avg_bals, dump_all, verbose):
 
 
     def dump_strats_frame(time, stratfile, trdrs):
@@ -1870,6 +1892,16 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, tdu
         stratfile.flush()
 
 
+    def blotter_dump(session_id, traders):
+        bdump = open(session_id+'_blotters.csv', 'w')
+        for t in traders:
+            bdump.write('%s, %d\n'% (traders[t].tid, len(traders[t].blotter)))
+            for b in traders[t].blotter:
+                bdump.write('%s, %s, %.3f, %d, %s, %s, %d\n'
+                            % (traders[t].tid, b['type'], b['time'], b['price'], b['party1'], b['party2'], b['qty']))
+        bdump.close()
+
+
     orders_verbose = False
     lob_verbose = False
     process_verbose = False
@@ -1878,6 +1910,9 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, tdu
     populate_verbose = False
 
     strat_dump = open(sess_id + '_strats.csv', 'w')
+
+    lobframes = open(sess_id + '_LOB_frames.csv', 'w')
+    lobframes = None # this disables writing of the LOB frames (which can generate HUGE files)
 
     # initialise the exchange
     exchange = Exchange()
@@ -1927,7 +1962,7 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, tdu
 
         # get a limit-order quote (or None) from a randomly chosen trader
         tid = list(traders.keys())[random.randint(0, len(traders) - 1)]
-        order = traders[tid].getorder(time, time_left, exchange.publish_lob(time, lob_verbose))
+        order = traders[tid].getorder(time, time_left, exchange.publish_lob(time, lobframes, lob_verbose))
 
         # if verbose: print('Trader Quote: %s' % (order))
 
@@ -1945,10 +1980,10 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, tdu
                 traders[trade['party1']].bookkeep(trade, order, bookkeep_verbose, time)
                 traders[trade['party2']].bookkeep(trade, order, bookkeep_verbose, time)
                 if dump_all:
-                    trade_stats(sess_id, traders, tdump, time, exchange.publish_lob(time, lob_verbose))
+                    trade_stats(sess_id, traders, avg_bals, time, exchange.publish_lob(time, lobframes, lob_verbose))
 
             # traders respond to whatever happened
-            lob = exchange.publish_lob(time, lob_verbose)
+            lob = exchange.publish_lob(time, lobframes, lob_verbose)
             for t in traders:
                 # NB respond just updates trader's internal variables
                 # doesn't alter the LOB, so processing each trader in
@@ -1970,22 +2005,22 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, tdu
 
     strat_dump.close()
 
+    if lobframes is not None:
+            lobframes.close()
+
+    dump_all = True
+
     if dump_all:
 
-        # dump the tape (transactions only -- not dumping cancellations)
-        exchange.tape_dump(sess_id+'_transactions.csv', 'w', 'keep')
+        # dump the tape (transactions only -- not writing cancellations)
+        exchange.tape_dump(sess_id+'_tape.csv', 'w', 'keep')
 
         # record the blotter for each trader
-        bdump = open(sess_id+'_blotters.csv', 'w')
-        for t in traders:
-            bdump.write('%s, %d\n'% (traders[t].tid, len(traders[t].blotter)))
-            for b in traders[t].blotter:
-                bdump.write('%s, Blotteritem, %s\n' % (traders[t].tid, b))
-        bdump.close()
+        blotter_dump(sess_id, traders)
 
 
     # write trade_stats for this session (NB end-of-session summary only)
-    trade_stats(sess_id, traders, tdump, time, exchange.publish_lob(time, lob_verbose))
+    trade_stats(sess_id, traders, avg_bals, time, exchange.publish_lob(time, lobframes, lob_verbose))
 
 
 
@@ -1997,7 +2032,7 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, tdu
 if __name__ == "__main__":
 
     # set up common parameters for all market sessions
-    n_days = 1095 # 1000 days is good, but 3*365=1095, so may as well go for three years.
+    n_days = 1.0 # 1000 days is good, but 3*365=1095, so may as well go for three years.
     start_time = 0.0
     end_time = 60.0 * 60.0 * 24 * n_days
     duration = end_time - start_time
@@ -2089,9 +2124,9 @@ if __name__ == "__main__":
         else:
             dump_all = True
 
-        tdump = open(trial_id + '_avg_balance.csv', 'w')
-        market_session(trial_id, start_time, end_time, traders_spec, order_sched, tdump, dump_all, verbose)
-        tdump.close()
+        balances_file = open(trial_id + '_avg_balance.csv', 'w')
+        market_session(trial_id, start_time, end_time, traders_spec, order_sched, balances_file, dump_all, verbose)
+        balances_file.close()
         trial = trial + 1
 
     # run a sequence of trials that exhaustively varies the ratio of four trader types
