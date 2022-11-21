@@ -1,3 +1,4 @@
 .DS_Store
-avg_balance.csv
-transactions.csv
+.ipynb_checkpoints
+__pycache__
+*.csv
