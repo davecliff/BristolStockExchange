@@ -48,6 +48,7 @@
 #
 # NB this code has been written to be readable/intelligible, not efficient!
 
+import os
 import sys
 import math
 import random
@@ -346,12 +347,11 @@ class Exchange(Orderbook):
 
     # Currently tape_dump only writes a list of transactions (ignores cancellations)
     def tape_dump(self, fname, fmode, tmode):
-        dumpfile = open(fname, fmode)
-        # dumpfile.write('type, time, price\n')
-        for tapeitem in self.tape:
-            if tapeitem['type'] == 'Trade':
-                dumpfile.write('Trd, %010.3f, %s\n' % (tapeitem['time'], tapeitem['price']))
-        dumpfile.close()
+        with open(fname, fmode) as dumpfile:
+            # dumpfile.write('type, time, price\n')
+            for tapeitem in self.tape:
+                if tapeitem['type'] == 'Trade':
+                    dumpfile.write('Trd, %010.3f, %s\n' % (tapeitem['time'], tapeitem['price']))
         if tmode == 'wipe':
             self.tape = []
 
@@ -672,7 +672,7 @@ class Trader_PRZI(Trader):
         optimizer = None # no optimizer => plain non-adaptive PRZI
         s_min = -1.0
         s_max = +1.0
-        
+
         # did call provide different params?
         if type(params) is dict:
             if 'k' in params:
@@ -681,7 +681,7 @@ class Trader_PRZI(Trader):
                 optimizer = params['optimizer']
             s_min = params['strat_min']
             s_max = params['strat_max']
-        
+
         self.optmzr = optimizer     # this determines whether it's PRZI, PRSH, or PRDE
         self.k = k                  # number of sampling points (cf number of arms on a multi-armed-bandit, or pop-size)
         self.theta0 = 100           # threshold-function limit value
@@ -983,7 +983,7 @@ class Trader_PRZI(Trader):
 
                 lut = self.strats[self.active_strat]['lut_ask']
 
-                
+
             verbose = False
             if verbose:
                 print('PRZI strat=%f LUT=%s \n \n' % (strat, lut))
@@ -993,10 +993,10 @@ class Trader_PRZI(Trader):
                     cprob = lut_entry['cum_prob']
                     print('%d, %f, %f' % (lut_entry['price'], cprob - last_cprob, cprob))
                     last_cprob = cprob
-                print('\n');    
-                
+                print('\n')
+
                 # print ('[LUT print suppressed]')
-            
+
             # do inverse lookup on the LUT to find the price
             u = random.random()
             for entry in lut['cdf_lut']:
@@ -1854,7 +1854,7 @@ def customer_orders(time, last_update, traders, trader_stats, os, pending, verbo
 
 
 # one session in the market
-def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, avg_bals, dump_all, verbose):
+def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, avg_bals, dump_all, verbose, dump_dir=None):
 
 
     def dump_strats_frame(time, stratfile, trdrs):
@@ -1909,14 +1909,13 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, avg
         stratfile.flush()
 
 
-    def blotter_dump(session_id, traders):
-        bdump = open(session_id+'_blotters.csv', 'w')
-        for t in traders:
-            bdump.write('%s, %d\n'% (traders[t].tid, len(traders[t].blotter)))
-            for b in traders[t].blotter:
-                bdump.write('%s, %s, %.3f, %d, %s, %s, %d\n'
-                            % (traders[t].tid, b['type'], b['time'], b['price'], b['party1'], b['party2'], b['qty']))
-        bdump.close()
+    def blotter_dump(fname, traders):
+        with open(fname, 'w') as bdump:
+            for t in traders:
+                bdump.write('%s, %d\n'% (traders[t].tid, len(traders[t].blotter)))
+                for b in traders[t].blotter:
+                    bdump.write('%s, %s, %.3f, %d, %s, %s, %d\n'
+                                % (traders[t].tid, b['type'], b['time'], b['price'], b['party1'], b['party2'], b['qty']))
 
 
     orders_verbose = False
@@ -1926,9 +1925,14 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, avg
     bookkeep_verbose = False
     populate_verbose = False
 
-    strat_dump = open(sess_id + '_strats.csv', 'w')
+    if dump_dir is None:
+        dump_dir = "."
 
-    lobframes = open(sess_id + '_LOB_frames.csv', 'w')
+    strat_dump_file = os.path.join(dump_dir, sess_id + '_strats.csv')
+    strat_dump = open(strat_dump_file, 'w')
+
+    lobframes_dump_file = os.path.join(dump_dir, sess_id + '_LOB_frames.csv')
+    lobframes = open(lobframes_dump_file, 'w')
     lobframes = None # this disables writing of the LOB frames (which can generate HUGE files)
 
     # initialise the exchange
@@ -2023,17 +2027,19 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, avg
     strat_dump.close()
 
     if lobframes is not None:
-            lobframes.close()
+        lobframes.close()
 
     dump_all = True
 
     if dump_all:
 
         # dump the tape (transactions only -- not writing cancellations)
-        exchange.tape_dump(sess_id+'_tape.csv', 'w', 'keep')
+        tape_dump_file = os.path.join(dump_dir, sess_id + '_tape.csv')
+        exchange.tape_dump(tape_dump_file, 'w', 'keep')
 
         # record the blotter for each trader
-        blotter_dump(sess_id, traders)
+        blotter_dump_file = os.path.join(dump_dir, sess_id + '_blotters.csv')
+        blotter_dump(blotter_dump_file, traders)
 
 
     # write trade_stats for this session (NB end-of-session summary only)
