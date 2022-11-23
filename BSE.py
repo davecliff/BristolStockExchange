@@ -1927,6 +1927,10 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, avg
 
     if dump_dir is None:
         dump_dir = "."
+    if not os.path.exists(dump_dir):
+        os.makedirs(dump_dir)
+    elif not os.path.isdir(dump_dir):
+        raise FileExistsError(f"A file with the same name already exists but is not a folder! '{dump_dir}'")
 
     strat_dump_file = os.path.join(dump_dir, sess_id + '_strats.csv')
     strat_dump = open(strat_dump_file, 'w')
