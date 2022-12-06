@@ -716,6 +716,9 @@ class Trader_PRZI(Trader):
                 elif self.optmzr == 'PRDE':
                     # differential evolution: seed initial strategies across whole space
                     strategy = self.mutate_strat(self.strats[0]['stratval'], 'uniform_bounded_range')
+                elif self.optmzr == None:
+                    # PRZI use the constant strategy
+                    pass
                 else:
                     sys.exit('bad self.optmzr when initializing PRZI strategies')
             self.strats.append({'stratval': strategy, 'start_t': start_time,
