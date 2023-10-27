@@ -533,9 +533,9 @@ class Trader_ZIC(Trader):
             limit = self.orders[0].price
             otype = self.orders[0].otype
             if otype == 'Bid':
-                quoteprice = random.randint(minprice, limit)
+                quoteprice = random.randint(int(minprice), int(limit))
             else:
-                quoteprice = random.randint(limit, maxprice)
+                quoteprice = random.randint(int(limit), int(maxprice))
                 # NB should check it == 'Ask' and barf if not
             order = Order(self.tid, otype, quoteprice, self.orders[0].qty, time, qid)
             self.lastquote = order
