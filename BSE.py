@@ -1843,7 +1843,7 @@ def customer_orders(time, last_update, traders, trader_stats, os, pending, verbo
 
 
 # one session in the market
-def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, avg_bals, dump_all, verbose):
+def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dump_flags, verbose):
 
     def dump_strats_frame(time, stratfile, trdrs):
         # write one frame of strategy snapshot
@@ -1912,10 +1912,16 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, avg
     bookkeep_verbose = False
     populate_verbose = False
 
-    strat_dump = open(sess_id + '_strats.csv', 'w')
+    if dump_flags['dump_strats']:
+        strat_dump = open(sess_id + '_strats.csv', 'w')
 
-    lobframes = open(sess_id + '_LOB_frames.csv', 'w')
-    lobframes = None     # this disables writing of the LOB frames (which can generate HUGE files)
+    if dump_flags['dump_lobs']:
+        lobframes = open(sess_id + '_LOB_frames.csv', 'w')
+    else:
+        lobframes = None
+
+    if dump_flags['dump_avgbals']:
+        avg_bals = open(sess_id + '_avg_balance.csv', 'w')
 
     # initialise the exchange
     exchange = Exchange()
@@ -1982,7 +1988,7 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, avg
                 # so the counterparties update order lists and blotters
                 traders[trade['party1']].bookkeep(trade, order, bookkeep_verbose, time)
                 traders[trade['party2']].bookkeep(trade, order, bookkeep_verbose, time)
-                if dump_all:
+                if dump_flags['dump_avgbals']:
                     trade_stats(sess_id, traders, avg_bals, time, exchange.publish_lob(time, lobframes, lob_verbose))
 
             # traders respond to whatever happened
@@ -1993,36 +1999,42 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, avg
                 # sequence (rather than random/shuffle) isn't a problem
                 traders[t].respond(time, lob, trade, respond_verbose)
 
-            # log all the PRSH/PRD/etc strategy info for this timestep?
-            frame_rate = 60 * 60     # print one frame every this many simulated seconds
+            if dump_flags['dump_strats']:
+                # log all the PRSH/PRDE/etc strategy info for this timestep?
+                frame_rate = 60 * 60     # print one frame every this many simulated seconds
 
-            if int(time) % frame_rate == 0 and int(time) not in frames_done:
-                # print one more frame to strategy dumpfile
-                dump_strats_frame(time, strat_dump, traders)
-                # record that we've written this frame
-                frames_done.add(int(time))
+                if int(time) % frame_rate == 0 and int(time) not in frames_done:
+                    # print one more frame to strategy dumpfile
+                    dump_strats_frame(time, strat_dump, traders)
+                    # record that we've written this frame
+                    frames_done.add(int(time))
 
         time = time + timestep
 
     # session has ended
 
-    strat_dump.close()
+    # write trade_stats for this session (NB could use this to write end-of-session summary only)
+    if dump_flags['dump_avgbals']:
+        trade_stats(sess_id, traders, avg_bals, time, exchange.publish_lob(time, lobframes, lob_verbose))
+        avg_bals.close()
 
-    if lobframes is not None:
-        lobframes.close()
-
-    dump_all = True
-
-    if dump_all:
-
+    if dump_flags['dump_tape']:
         # dump the tape (transactions only -- not writing cancellations)
         exchange.tape_dump(sess_id+'_tape.csv', 'w', 'keep')
 
+    if dump_flags['dump_blotters']:
         # record the blotter for each trader
         blotter_dump(sess_id, traders)
 
-    # write trade_stats for this session (NB end-of-session summary only)
-    trade_stats(sess_id, traders, avg_bals, time, exchange.publish_lob(time, lobframes, lob_verbose))
+    if dump_flags['dump_strats']:
+        strat_dump.close()
+
+    if dump_flags['dump_lobs']:
+        lobframes.close()
+
+
+
+
 
 #############################
 
@@ -2062,21 +2074,11 @@ if __name__ == "__main__":
     #                     {'from':2*duration/3, 'to':end_time, 'ranges':[range1], 'stepmode':'fixed'}
     #                   ]
 
-    # The code below sets up symmetric supply and demand curves at prices from 50 to 150, P0=100
-
     range1 = (60, 60)
     supply_schedule = [{'from': start_time, 'to': end_time, 'ranges': [range1], 'stepmode': 'fixed'}]
 
     range2 = (100, 100)
     demand_schedule = [{'from': start_time, 'to': end_time, 'ranges': [range2], 'stepmode': 'fixed'}]
-
-    # The code below sets up flat (perfectly elastic) supply and demand curves at prices of 50 and 150, P0=100
-
-    #range1 = (60, 60)
-    #supply_schedule = [{'from': start_time, 'to': end_time, 'ranges': [range1], 'stepmode': 'fixed'}]
-
-    #range2 = (140, 140)
-    #demand_schedule = [{'from': start_time, 'to': end_time, 'ranges': [range2], 'stepmode': 'fixed'}]
 
     # new customer orders arrive at each trader approx once every order_interval seconds
     order_interval = 5
@@ -2103,13 +2105,13 @@ if __name__ == "__main__":
 
     # run a sequence of trials, one session per trial
 
-    verbose = True
+    verbose = False
 
     # n_trials is how many trials (i.e. market sessions) to run in total
-    n_trials = 10
+    n_trials = 3
 
     # n_recorded is how many trials (i.e. market sessions) to write full data-files for
-    n_trials_recorded = 0
+    n_trials_recorded = 1
 
     trial = 1
 
@@ -2118,13 +2120,14 @@ if __name__ == "__main__":
         trial_id = 'bse_d%03d_i%02d_%04d' % (n_days, order_interval, trial)
 
         if trial > n_trials_recorded:
-            dump_all = False
+            dump_flags = {'dump_blotters': False, 'dump_lobs': False, 'dump_strats': False,
+                          'dump_avgbals': False, 'dump_tape': False}
         else:
-            dump_all = True
+            dump_flags = {'dump_blotters': True, 'dump_lobs': True, 'dump_strats': True,
+                          'dump_avgbals': True, 'dump_tape': True}
 
-        balances_file = open(trial_id + '_avg_balance.csv', 'w')
-        market_session(trial_id, start_time, end_time, traders_spec, order_sched, balances_file, dump_all, verbose)
-        balances_file.close()
+        market_session(trial_id, start_time, end_time, traders_spec, order_sched, dump_flags, verbose)
+
         trial = trial + 1
 
     # run a sequence of trials that exhaustively varies the ratio of four trader types
