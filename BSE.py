@@ -326,7 +326,8 @@ class Exchange(Orderbook):
             print('counterparty %s' % counterparty)
         if counterparty is not None:
             # process the trade
-            if verbose: print('>>>>>>>>>>>>>>>>>TRADE t=%010.3f $%d %s %s' % (time, price, counterparty, order.tid))
+            if verbose:
+                print('>>>>>>>>>>>>>>>>>TRADE t=%010.3f $%d %s %s' % (time, price, counterparty, order.tid))
             transaction_record = {'type': 'Trade',
                                   'time': time,
                                   'price': price,
@@ -338,7 +339,6 @@ class Exchange(Orderbook):
             # NB this just throws away the older items on the tape -- could instead dump to disk
             # right-truncate the tape so it keeps only the most recent items
             self.tape = self.tape[-self.tape_length:]
-
 
             return transaction_record
         else:
@@ -374,7 +374,7 @@ class Exchange(Orderbook):
 
         if lob_file is not None:
             # build a linear character-string summary of only those prices on LOB with nonzero quantities
-            lobstring ='Bid:,'
+            lobstring = 'Bid:,'
             n_bids = len(self.bids.lob_anon)
             if n_bids > 0:
                 lobstring += '%d,' % n_bids
@@ -432,11 +432,9 @@ class Trader:
         self.n_trades = 0           # how many trades has this trader done?
         self.lastquote = None       # record of what its last quote was
 
-
     def __str__(self):
         return '[TID %s type %s balance %s blotter %s orders %s n_trades %s profitpertime %s]' \
                % (self.tid, self.ttype, self.balance, self.blotter, self.orders, self.n_trades, self.profitpertime)
-
 
     def add_order(self, order, verbose):
         # in this version, trader has at most one order,
@@ -452,11 +450,9 @@ class Trader:
             print('add_order < response=%s' % response)
         return response
 
-
     def del_order(self, order):
         # this is lazy: assumes each trader has only one customer order with quantity=1, so deleting sole order
         self.orders = []
-
 
     def bookkeep(self, trade, order, verbose, time):
 
@@ -465,7 +461,7 @@ class Trader:
             outstr = outstr + str(order)
 
         self.blotter.append(trade)  # add trade record to trader's blotter
-        self.blotter = self.blotter[-self.blotter_length:] # right-truncate to keep to length
+        self.blotter = self.blotter[-self.blotter_length:]  # right-truncate to keep to length
 
         # NB What follows is **LAZY** -- assumes all orders are quantity=1
         transactionprice = trade['price']
@@ -483,15 +479,14 @@ class Trader:
             print(order)
             sys.exit('FAIL: negative profit')
 
-        if verbose: print('%s profit=%d balance=%d profit/time=%d' % (outstr, profit, self.balance, self.profitpertime))
+        if verbose:
+            print('%s profit=%d balance=%d profit/time=%d' % (outstr, profit, self.balance, self.profitpertime))
         self.del_order(order)  # delete the order
-
 
     # specify how trader responds to events in the market
     # this is a null action, expect it to be overloaded by specific algos
     def respond(self, time, lob, trade, verbose):
         return None
-
 
     # specify how trader mutates its parameter values
     # this is a null action, expect it to be overloaded by specific algos
@@ -642,7 +637,6 @@ class Trader_PRZI(Trader):
             sys.exit('FAIL: bad mode in mutate_strat')
         return newstrat
 
-
     def strat_str(self):
         # pretty-print a string summarising this trader's strategies
         string = '%s: %s active_strat=[%d]:\n' % (self.tid, self.ttype, self.active_strat)
@@ -653,7 +647,6 @@ class Trader_PRZI(Trader):
             string = string + stratstr
 
         return string
-
 
     def __init__(self, ttype, tid, balance, params, time):
         # if params == "landscape-mapper" then it generates data for mapping the fitness landscape
@@ -669,7 +662,7 @@ class Trader_PRZI(Trader):
 
         # default parameter values
         k = 1
-        optimizer = None # no optimizer => plain non-adaptive PRZI
+        optimizer = None     # no optimizer => plain non-adaptive PRZI
         s_min = -1.0
         s_max = +1.0
         
@@ -696,7 +689,7 @@ class Trader_PRZI(Trader):
         self.profit_epsilon = 0.0 * random.random()    # minimum profit-per-sec difference between strategies that counts
         self.strats = []            # strategies awaiting initialization
         self.pmax = None            # this trader's estimate of the maximum price the market will bear
-        self.pmax_c_i = math.sqrt(random.randint(1,10))  # multiplier coefficient when estimating p_max
+        self.pmax_c_i = math.sqrt(random.randint(1, 10))  # multiplier coefficient when estimating p_max
         self.mapper_outfile = None
         # differential evolution parameters all in one dictionary
         self.diffevol = {'de_state': 'active_s0',          # initial state: strategy 0 is active (being evaluated)
@@ -704,7 +697,7 @@ class Trader_PRZI(Trader):
                          'snew_index': self.k,             # (k+1)th item of strategy list is DE's new strategy
                          'snew_stratval': None,            # assigned later
                          'F': 0.8                          # differential weight -- usually between 0 and 2
-        }
+                        }
 
         start_time = time
         profit = 0.0
@@ -781,7 +774,6 @@ class Trader_PRZI(Trader):
             # print('shvr_p=%f; ' % shvr_p)
             return shvr_p
 
-
         # calculate cumulative distribution function (CDF) look-up table (LUT)
         def calc_cdf_lut(strat, t0, m, dirn, pmin, pmax):
             # set parameter values and calculate CDF LUT
@@ -795,7 +787,7 @@ class Trader_PRZI(Trader):
                 t = max(-1*theta0, min(theta0, x))
                 return t
 
-            epsilon = 0.000001 #used to catch DIV0 errors
+            epsilon = 0.000001   # used to catch DIV0 errors
             verbose = False
 
             if (strat > 1.0) or (strat < -1.0):
@@ -820,8 +812,8 @@ class Trader_PRZI(Trader):
                 # so cdf is simply the limit-price with probability 1
 
                 if dirn == 'buy':
-                    cdf = [{'price':pmax, 'cum_prob': 1.0}]
-                else: # must be a sell
+                    cdf = [{'price': pmax, 'cum_prob': 1.0}]
+                else:    # must be a sell
                     cdf = [{'price': pmin, 'cum_prob': 1.0}]
 
                 if verbose:
@@ -864,7 +856,7 @@ class Trader_PRZI(Trader):
                 if cal_p < 0:
                     cal_p = 0   # just in case
 
-                calp_interval.append({'price':p, "cal_p":cal_p})
+                calp_interval.append({'price': p, "cal_p": cal_p})
                 calp_sum += cal_p
 
             if calp_sum <= 0:
@@ -883,7 +875,7 @@ class Trader_PRZI(Trader):
             if verbose:
                 print('\n\ncdf:', cdf)
 
-            return {'strat':strat, 'dirn':dirn, 'pmin':pmin, 'pmax':pmax, 'cdf_lut':cdf}
+            return {'strat': strat, 'dirn': dirn, 'pmin': pmin, 'pmax': pmax, 'cdf_lut': cdf}
 
         verbose = False
 
@@ -913,9 +905,9 @@ class Trader_PRZI(Trader):
             minprice = int(lob['bids']['worst'])  # default assumption: worst bid price possible as defined by exchange
 
             # trader's individual estimate highest price the market will bear
-            maxprice = self.pmax # default assumption
+            maxprice = self.pmax    # default assumption
             if self.pmax is None:
-                maxprice = int(limit * self.pmax_c_i + 0.5) # in the absence of any other info, guess
+                maxprice = int(limit * self.pmax_c_i + 0.5)     # in the absence of any other info, guess
                 self.pmax = maxprice
             elif lob['asks']['sess_hi'] is not None:
                 if self.pmax < lob['asks']['sess_hi']:        # some other trader has quoted higher than I expected
@@ -970,7 +962,6 @@ class Trader_PRZI(Trader):
                         # this should never happen, but just in case it does...
                         p_max = p_min
 
-
                 lut_ask = self.strats[self.active_strat]['lut_ask']
                 if (lut_ask is None) or \
                         (lut_ask['strat'] != strat) or \
@@ -983,7 +974,6 @@ class Trader_PRZI(Trader):
 
                 lut = self.strats[self.active_strat]['lut_ask']
 
-                
             verbose = False
             if verbose:
                 print('PRZI strat=%f LUT=%s \n \n' % (strat, lut))
@@ -993,7 +983,7 @@ class Trader_PRZI(Trader):
                     cprob = lut_entry['cum_prob']
                     print('%d, %f, %f' % (lut_entry['price'], cprob - last_cprob, cprob))
                     last_cprob = cprob
-                print('\n');    
+                print('\n')
                 
                 # print ('[LUT print suppressed]')
             
@@ -1010,7 +1000,6 @@ class Trader_PRZI(Trader):
 
         return order
 
-
     def bookkeep(self, trade, order, verbose, time):
 
         outstr = ""
@@ -1018,7 +1007,7 @@ class Trader_PRZI(Trader):
             outstr = outstr + str(order)
 
         self.blotter.append(trade)  # add trade record to trader's blotter
-        self.blotter = self.blotter[-self.blotter_length:] # right-truncate to keep to length
+        self.blotter = self.blotter[-self.blotter_length:]   # right-truncate to keep to length
 
         # NB What follows is **LAZY** -- assumes all orders are quantity=1
         transactionprice = trade['price']
@@ -1036,7 +1025,8 @@ class Trader_PRZI(Trader):
             print(order)
             sys.exit('PRSH FAIL: negative profit')
 
-        if verbose: print('%s profit=%d balance=%d profit/time=%d' % (outstr, profit, self.balance, self.profitpertime))
+        if verbose:
+            print('%s profit=%d balance=%d profit/time=%d' % (outstr, profit, self.balance, self.profitpertime))
         self.del_order(order)  # delete the order
 
         self.strats[self.active_strat]['profit'] += profit
@@ -1049,10 +1039,10 @@ class Trader_PRZI(Trader):
             # to keep things sensible whne time_alive == 0 we say the profit per second is whatever the actual profit is
             self.strats[self.active_strat]['pps'] = profit
 
-
     # PRSH respond() asks/answers two questions
     # do we need to choose a new strategy? (i.e. have just completed/cancelled previous customer order)
     # do we need to dump one arm and generate a new one? (i.e., both/all arms have been evaluated enough)
+
     def respond(self, time, lob, trade, verbose):
 
         # "PRSH" is a very basic form of stochastic hill-climber (SHC) that's v easy to understand and to code
@@ -1085,7 +1075,6 @@ class Trader_PRZI(Trader):
                 s['pps'] = s['profit'] / pps_time
             else:
                 s['pps'] = s['profit']
-
 
         if self.optmzr == 'PRSH':
 
@@ -1131,7 +1120,7 @@ class Trader_PRZI(Trader):
                 # all strategies have had long enough: which has made most profit?
 
                 # sort them by profit
-                strats_sorted = sorted(self.strats, key = lambda k: k['pps'], reverse = True)
+                strats_sorted = sorted(self.strats, key=lambda k: k['pps'], reverse=True)
                 # strats_sorted = self.strats     # use this as a control: unsorts the strats, gives pure random walk.
 
                 if verbose:
@@ -1143,7 +1132,7 @@ class Trader_PRZI(Trader):
                 if self.params == 'landscape-mapper':
                     for s in self.strats:
                         self.mapper_outfile.write('time, %f, strat, %f, pps, %f\n' %
-                              (time, s['stratval'], s['pps']))
+                                                  (time, s['stratval'], s['pps']))
                     self.mapper_outfile.flush()
                     sys.exit()
 
@@ -1154,7 +1143,7 @@ class Trader_PRZI(Trader):
                     prof_diff = strats_sorted[0]['pps'] - strats_sorted[1]['pps']
                     if abs(prof_diff) < self.profit_epsilon:
                         # they're too close to call, so just flip a coin
-                        best_strat = random.randint(0,1)
+                        best_strat = random.randint(0, 1)
 
                     if best_strat == 1:
                         # need to swap strats[0] and strats[1]
@@ -1602,7 +1591,7 @@ def populate_market(traders_spec, traders, shuffle, verbose):
                 elif ttype == 'PRDE':
                     parameters = {'optimizer': 'PRDE', 'k': trader_params['k'],
                                   'strat_min': trader_params['s_min'], 'strat_max': trader_params['s_max']}
-                else: # ttype=PRZI
+                else:   # ttype=PRZI
                     parameters = {'optimizer': None, 'k': 1,
                                   'strat_min': trader_params['s_min'], 'strat_max': trader_params['s_max']}
 
@@ -1856,7 +1845,6 @@ def customer_orders(time, last_update, traders, trader_stats, os, pending, verbo
 # one session in the market
 def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, avg_bals, dump_all, verbose):
 
-
     def dump_strats_frame(time, stratfile, trdrs):
         # write one frame of strategy snapshot
 
@@ -1908,16 +1896,14 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, avg
         stratfile.write(line_str)
         stratfile.flush()
 
-
     def blotter_dump(session_id, traders):
         bdump = open(session_id+'_blotters.csv', 'w')
         for t in traders:
-            bdump.write('%s, %d\n'% (traders[t].tid, len(traders[t].blotter)))
+            bdump.write('%s, %d\n' % (traders[t].tid, len(traders[t].blotter)))
             for b in traders[t].blotter:
                 bdump.write('%s, %s, %.3f, %d, %s, %s, %d\n'
                             % (traders[t].tid, b['type'], b['time'], b['price'], b['party1'], b['party2'], b['qty']))
         bdump.close()
-
 
     orders_verbose = False
     lob_verbose = False
@@ -1929,7 +1915,7 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, avg
     strat_dump = open(sess_id + '_strats.csv', 'w')
 
     lobframes = open(sess_id + '_LOB_frames.csv', 'w')
-    lobframes = None # this disables writing of the LOB frames (which can generate HUGE files)
+    lobframes = None     # this disables writing of the LOB frames (which can generate HUGE files)
 
     # initialise the exchange
     exchange = Exchange()
@@ -2023,7 +2009,7 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, avg
     strat_dump.close()
 
     if lobframes is not None:
-            lobframes.close()
+        lobframes.close()
 
     dump_all = True
 
@@ -2035,11 +2021,8 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, avg
         # record the blotter for each trader
         blotter_dump(sess_id, traders)
 
-
     # write trade_stats for this session (NB end-of-session summary only)
     trade_stats(sess_id, traders, avg_bals, time, exchange.publish_lob(time, lobframes, lob_verbose))
-
-
 
 #############################
 
@@ -2049,11 +2032,10 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, avg
 if __name__ == "__main__":
 
     # set up common parameters for all market sessions
-    n_days = 1.0 # 1000 days is good, but 3*365=1095, so may as well go for three years.
+    n_days = 1.0     # 1000 days is good, but 3*365=1095, so may as well go for three years.
     start_time = 0.0
     end_time = 60.0 * 60.0 * 24 * n_days
     duration = end_time - start_time
-
 
     # schedule_offsetfn returns time-dependent offset, to be added to schedule prices
     def schedule_offsetfn(t):
@@ -2079,7 +2061,6 @@ if __name__ == "__main__":
     #                     {'from':duration/3, 'to':2*duration/3, 'ranges':[range2], 'stepmode':'fixed'},
     #                     {'from':2*duration/3, 'to':end_time, 'ranges':[range1], 'stepmode':'fixed'}
     #                   ]
-
 
     # The code below sets up symmetric supply and demand curves at prices from 50 to 150, P0=100
 
@@ -2189,4 +2170,3 @@ if __name__ == "__main__":
     # tdump.close()
     #
     # print(trialnumber)
-
