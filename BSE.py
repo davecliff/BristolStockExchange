@@ -1935,7 +1935,7 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
         lobframes = None
 
     if dump_flags['dump_avgbals']:
-        avg_bals = open(trial_id + '_avg_balance.csv', 'w')
+        avg_bals = open(sess_id + '_avg_balance.csv', 'w')
 
     # initialise the exchange
     exchange = Exchange()
