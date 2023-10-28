@@ -22,6 +22,7 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
+
   <component name="PropertiesComponent"><![CDATA[{
   "keyToString": {
     "RunOnceActivity.OpenProjectViewOnStart": "true",
@@ -33,7 +34,7 @@
     "node.js.selected.package.tslint": "(autodetect)",
     "settings.editor.selected.configurable": "org.jetbrains.plugins.notebooks.jupyter.connections.configuration.JupyterServerConfigurable"
   }
-}]]></component>
+}</component>
   <component name="RunManager">
     <configuration name="BSE" type="PythonConfigurationType" factoryName="Python" nameIsGenerated="true">
       <module name="BristolStockExchange" />
@@ -67,7 +68,8 @@
       <option name="presentableId" value="Default" />
       <updated>1665994552377</updated>
       <workItem from="1665994563147" duration="8237000" />
-      <workItem from="1698486167805" duration="4001000" />
+      <workItem from="1698491854751" duration="728000" />
+
     </task>
     <servers />
   </component>
