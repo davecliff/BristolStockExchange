@@ -1726,7 +1726,7 @@ def customer_orders(time, last_update, traders, trader_stats, os, pending, verbo
                 s = random.randint(0, len(sched) - 1)
                 pmin = sysmin_check(min(sched[s][0], sched[s][1]))
                 pmax = sysmax_check(max(sched[s][0], sched[s][1]))
-            orderprice = random.randint(pmin, pmax)
+            orderprice = random.randint(int(pmin), int(pmax))
         else:
             sys.exit('FAIL: Unknown mode in schedule')
         orderprice = sysmin_check(sysmax_check(orderprice))
