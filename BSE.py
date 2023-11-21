@@ -2,7 +2,7 @@
 #
 # BSE: The Bristol Stock Exchange
 #
-
+# Version 1.8; March 2023 added ZIPSH
 # Version 1.7; September 2022 added PRDE
 # Version 1.6; September 2021 added PRSH
 # Version 1.5; 02 Jan 2021 -- was meant to be the final version before switch to BSE2.x, but that didn't happen :-)
@@ -10,7 +10,7 @@
 # Version 1.3; July 21st, 2018 (Python 2.x)
 # Version 1.2; November 17th, 2012 (Python 2.x)
 #
-# Copyright (c) 2012-2022, Dave Cliff
+# Copyright (c) 2012-2023, Dave Cliff
 #
 #
 # ------------------------
@@ -51,13 +51,13 @@
 import sys
 import math
 import random
+import os
 import time as chrono
 
 # a bunch of system constants (globals)
 bse_sys_minprice = 1                    # minimum price in the system, in cents/pennies
 bse_sys_maxprice = 500                  # maximum price in the system, in cents/pennies
 # ticksize should be a param of an exchange (so different exchanges have different ticksizes)
-# todo: change this, so ticksize no longer global. 
 ticksize = 1  # minimum change in price, in cents/pennies
 
 
@@ -281,6 +281,7 @@ class Exchange(Orderbook):
         # or if it crosses the best counterparty offer, execute it (treat as a market order)
         oprice = order.price
         counterparty = None
+        price = None
         [qid, response] = self.add_order(order, verbose)  # add it to the order lists -- overwriting any previous order
         order.qid = qid
         if verbose:
@@ -411,7 +412,7 @@ class Exchange(Orderbook):
         return public_data
 
 
-##################--Traders below here--#############
+# #################--Traders below here--#############
 
 
 # Trader superclass
@@ -425,10 +426,11 @@ class Trader:
         self.params = params        # parameters/extras associated with this trader-type or individual trader.
         self.blotter = []           # record of trades executed
         self.blotter_length = 100   # maximum length of blotter
-        self.orders = []            # customer orders currently being worked (fixed at 1)
+        self.orders = []            # customer orders currently being worked (fixed at len=1 in BSE1.x)
         self.n_quotes = 0           # number of quotes live on LOB
         self.birthtime = time       # used when calculating age of a trader/strategy
         self.profitpertime = 0      # profit per unit time
+        self.profit_mintime = 60    # minimum duration in seconds for calculating profitpertime
         self.n_trades = 0           # how many trades has this trader done?
         self.lastquote = None       # record of what its last quote was
 
@@ -453,6 +455,15 @@ class Trader:
     def del_order(self, order):
         # this is lazy: assumes each trader has only one customer order with quantity=1, so deleting sole order
         self.orders = []
+
+    def profitpertime_update(self, time, birthtime, totalprofit):
+        time_alive = (time - birthtime)
+        if time_alive >= self.profit_mintime:
+            profitpertime = totalprofit / time_alive
+        else:
+            # if it's not been alive long enough, divide it by mintime instead of actual time
+            profitpertime = totalprofit / self.profit_mintime
+        return profitpertime
 
     def bookkeep(self, trade, order, verbose, time):
 
@@ -480,12 +491,21 @@ class Trader:
             sys.exit('FAIL: negative profit')
 
         if verbose:
-            print('%s profit=%d balance=%d profit/time=%d' % (outstr, profit, self.balance, self.profitpertime))
+            print('%s profit=%d balance=%d profit/time=%s' % (outstr, profit, self.balance, str(self.profitpertime)))
         self.del_order(order)  # delete the order
+
+        # if the trader has multiple strategies (e.g. PRSH/PRDE/ZIPSH/ZIPDE) then there is more work to do...
+        if hasattr(self, 'strats'):
+            self.strats[self.active_strat]['profit'] += profit
+            totalprofit = self.strats[self.active_strat]['profit']
+            birthtime = self.strats[self.active_strat]['start_t']
+            self.strats[self.active_strat]['pps'] = self.profitpertime_update(time, birthtime, totalprofit)
 
     # specify how trader responds to events in the market
     # this is a null action, expect it to be overloaded by specific algos
     def respond(self, time, lob, trade, verbose):
+        # any trader subclass with custom respond() must include this update of profitpertime
+        self.profitpertime = self.profitpertime_update(time, self.birthtime, self.balance)
         return None
 
     # specify how trader mutates its parameter values
@@ -616,6 +636,11 @@ class Trader_Sniper(Trader):
 
 class Trader_PRZI(Trader):
 
+    # return strategy as a csv-format string (trivial in PRZI, but other traders with more complex strategies need this)
+    def strat_csv_str(self, strat):
+        csv_str = 's=,%+5.3f, ' % strat
+        return csv_str
+
     # how to mutate the strategy values when evolving / hill-climbing
     def mutate_strat(self, s, mode):
         s_min = self.strat_range_min
@@ -662,10 +687,10 @@ class Trader_PRZI(Trader):
 
         # default parameter values
         k = 1
-        optimizer = None     # no optimizer => plain non-adaptive PRZI
+        optimizer = None    # no optimizer => plain non-adaptive PRZI
         s_min = -1.0
         s_max = +1.0
-        
+
         # did call provide different params?
         if type(params) is dict:
             if 'k' in params:
@@ -674,7 +699,7 @@ class Trader_PRZI(Trader):
                 optimizer = params['optimizer']
             s_min = params['strat_min']
             s_max = params['strat_max']
-        
+
         self.optmzr = optimizer     # this determines whether it's PRZI, PRSH, or PRDE
         self.k = k                  # number of sampling points (cf number of arms on a multi-armed-bandit, or pop-size)
         self.theta0 = 100           # threshold-function limit value
@@ -706,10 +731,11 @@ class Trader_PRZI(Trader):
         lut_ask = None
 
         for s in range(self.k + 1):
-            # initialise each of the strategies in sequence: 
+            # initialise each of the strategies in sequence:
             # for PRZI: only one strategy is needed
             # for PRSH, one random initial strategy, then k-1 mutants of that initial strategy
             # for PRDE, use draws from uniform distbn over whole range and a (k+1)th strategy is needed to hold s_new
+            strategy = None
             if s == 0:
                 strategy = random.uniform(self.strat_range_min, self.strat_range_max)
             else:
@@ -720,9 +746,14 @@ class Trader_PRZI(Trader):
                     # differential evolution: seed initial strategies across whole space
                     strategy = self.mutate_strat(self.strats[0]['stratval'], 'uniform_bounded_range')
                 else:
-                    # PRZI -- do nothing
+                    # plain PRZI -- do nothing
                     pass
-            self.strats.append({'stratval': strategy, 'start_t': start_time,
+            # add to the list of strategies
+            if s == self.active_strat:
+                active_flag = True
+            else:
+                active_flag = False
+            self.strats.append({'stratval': strategy, 'start_t': start_time, 'active': active_flag,
                                 'profit': profit, 'pps': profit_per_second, 'lut_bid': lut_bid, 'lut_ask': lut_ask})
             if self.optmzr is None:
                 # PRZI -- so we stop after one iteration
@@ -738,8 +769,9 @@ class Trader_PRZI(Trader):
             strategy = -1.0
             k = 0
             self.strats = []
+
             while strategy <= +1.0:
-                self.strats.append({'stratval': strategy, 'start_t': start_time,
+                self.strats.append({'stratval': strategy, 'start_t': start_time, 'active': False,
                                     'profit': profit, 'pps': profit_per_second, 'lut_bid': lut_bid, 'lut_ask': lut_ask})
                 k += 1
                 strategy += strategy_delta
@@ -749,7 +781,6 @@ class Trader_PRZI(Trader):
 
         if verbose:
             print("%s\n" % self.strat_str())
-
 
     def getorder(self, time, countdown, lob):
 
@@ -787,7 +818,7 @@ class Trader_PRZI(Trader):
                 t = max(-1*theta0, min(theta0, x))
                 return t
 
-            epsilon = 0.000001   # used to catch DIV0 errors
+            epsilon = 0.000001  # used to catch DIV0 errors
             verbose = False
 
             if (strat > 1.0) or (strat < -1.0):
@@ -813,7 +844,7 @@ class Trader_PRZI(Trader):
 
                 if dirn == 'buy':
                     cdf = [{'price': pmax, 'cum_prob': 1.0}]
-                else:    # must be a sell
+                else:   # must be a sell
                     cdf = [{'price': pmin, 'cum_prob': 1.0}]
 
                 if verbose:
@@ -898,7 +929,7 @@ class Trader_PRZI(Trader):
                 # customer-order i.d. has changed, so we're working a new customer-order now
                 # this is the time to switch arms
                 # print("New order! (how does it feel?)")
-                dummy = 1
+                pass
 
             # get extreme limits on price interval
             # lowest price the market will bear
@@ -988,6 +1019,7 @@ class Trader_PRZI(Trader):
                 # print ('[LUT print suppressed]')
             
             # do inverse lookup on the LUT to find the price
+            quoteprice = None
             u = random.random()
             for entry in lut['cdf_lut']:
                 if u < entry['cum_prob']:
@@ -1007,7 +1039,7 @@ class Trader_PRZI(Trader):
             outstr = outstr + str(order)
 
         self.blotter.append(trade)  # add trade record to trader's blotter
-        self.blotter = self.blotter[-self.blotter_length:]   # right-truncate to keep to length
+        self.blotter = self.blotter[-self.blotter_length:]      # right-truncate to keep to length
 
         # NB What follows is **LAZY** -- assumes all orders are quantity=1
         transactionprice = trade['price']
@@ -1036,13 +1068,12 @@ class Trader_PRZI(Trader):
             self.strats[self.active_strat]['pps'] = profit_per_second
         else:
             # if it trades at the instant it is born then it would have infinite profit-per-second, which is insane
-            # to keep things sensible whne time_alive == 0 we say the profit per second is whatever the actual profit is
+            # to keep things sensible when time_alive == 0 we say the profit per second is whatever the actual profit is
             self.strats[self.active_strat]['pps'] = profit
 
     # PRSH respond() asks/answers two questions
     # do we need to choose a new strategy? (i.e. have just completed/cancelled previous customer order)
     # do we need to dump one arm and generate a new one? (i.e., both/all arms have been evaluated enough)
-
     def respond(self, time, lob, trade, verbose):
 
         # "PRSH" is a very basic form of stochastic hill-climber (SHC) that's v easy to understand and to code
@@ -1063,25 +1094,30 @@ class Trader_PRZI(Trader):
         # todo: add in other optimizer algorithms that are cleverer than these
         #  e.g. inspired by multi-arm-bandit algos like like epsilon-greedy, softmax, or upper confidence bound (UCB)
 
+        def strat_activate(t, s_index):
+            # print('t=%f Strat_activate, index=%d, active=%s' % (t, s_index, self.strats[s_index]['active'] ))
+            self.strats[s_index]['start_t'] = t
+            self.strats[s_index]['active'] = True
+            self.strats[s_index]['profit'] = 0.0
+            self.strats[s_index]['pps'] = 0.0
+
         verbose = False
 
-        # first update each strategy's profit-per-second (pps) value -- this is the "fitness" of each strategy
+        # first update each active strategy's profit-per-second (pps) value -- this is the "fitness" of each strategy
         for s in self.strats:
             # debugging check: make profit be directly proportional to strategy, no noise
             # s['profit'] = 100 * abs(s['stratval'])
             # update pps
-            pps_time = time - s['start_t']
-            if pps_time > 0:
-                s['pps'] = s['profit'] / pps_time
-            else:
-                s['pps'] = s['profit']
+            active_flag = s['active']
+            if active_flag:
+                s['pps'] = self.profitpertime_update(time, s['start_t'], s['profit'])
 
         if self.optmzr == 'PRSH':
 
             if verbose:
                 # print('t=%f %s PRSH respond: shc_algo=%s eval_t=%f max_wait_t=%f' %
                 #     (time, self.tid, shc_algo, self.strat_eval_time, self.strat_wait_time))
-                dummy = 1
+                pass
 
             # do we need to swap strategies?
             # this is based on time elapsed since last reset -- waiting for the current strategy to get a deal
@@ -1094,17 +1130,19 @@ class Trader_PRZI(Trader):
             time_elapsed = time - self.last_strat_change_time
             if time_elapsed > self.strat_wait_time:
                 # we have waited long enough: swap to another strategy
+                self.strats[s]['active'] = False
 
                 new_strat = s + 1
                 if new_strat > self.k - 1:
                     new_strat = 0
 
                 self.active_strat = new_strat
+                self.strats[new_strat]['active'] = True
                 self.last_strat_change_time = time
 
                 if verbose:
-                    print('t=%f %s PRSH respond: strat[%d] elapsed=%f; wait_t=%f, switched to strat=%d' %
-                          (time, self.tid, s, time_elapsed, self.strat_wait_time, new_strat))
+                    print('t=%.3fsec (%.2fdays), %s PRSH respond: strat[%d] elapsed=%.3f; wait_t=%.3f, pps=%f,  switched to strat=%d' %
+                          (time, time/86400, self.tid, s, time_elapsed, self.strat_wait_time, self.strats[s]['pps'], new_strat))
 
             # code below here deals with creating a new set of k-1 mutants from the best of the k strats
 
@@ -1185,11 +1223,10 @@ class Trader_PRZI(Trader):
                     sys.exit('FAIL: k too small for diffevol')
 
                 if self.diffevol['de_state'] == 'active_s0':
+                    self.strats[self.active_strat]['active'] = False
                     # we've evaluated s0, so now we need to evaluate s_new
                     self.active_strat = self.diffevol['snew_index']
-                    self.strats[self.active_strat]['start_t'] = time
-                    self.strats[self.active_strat]['profit'] = 0.0
-                    self.strats[self.active_strat]['pps'] = 0.0
+                    strat_activate(time, self.active_strat)
 
                     self.diffevol['de_state'] = 'active_snew'
 
@@ -1265,9 +1302,7 @@ class Trader_PRZI(Trader):
 
                     # set up next iteration: first evaluate s0
                     self.active_strat = self.diffevol['s0_index']
-                    self.strats[self.active_strat]['start_t'] = time
-                    self.strats[self.active_strat]['profit'] = 0.0
-                    self.strats[self.active_strat]['pps'] = 0.0
+                    strat_activate(time, self.active_strat)
 
                     self.diffevol['de_state'] = 'active_s0'
 
@@ -1289,20 +1324,120 @@ class Trader_ZIP(Trader):
     #    so a single trader can both buy AND sell
     #    -- in the original, traders were either buyers OR sellers
 
+    # take a ZIP strategy vector and return it as a csv-format string
+    def strat_csv_str(self, strat):
+        if strat is None:
+            csv_str = 'None, '
+        else:
+            csv_str = 'mBuy=,%+5.3f, mSel=,%+5.3f, b=,%5.3f, m=,%5.3f, ca=,%6.4f, cr=,%6.4f, ' % \
+                      (strat['m_buy'], strat['m_sell'], strat['beta'], strat['momntm'], strat['ca'], strat['cr'])
+        return csv_str
+
+    # how to mutate the strategy values when evolving / hill-climbing
+    def mutate_strat(self, s, mode):
+
+        def gauss_mutate_clip(value, sdev, min, max):
+            mut_val = value
+            while mut_val == value:
+                mut_val = value + random.gauss(0.0, sdev)
+                if mut_val > max:
+                    mut_val = max
+                elif mut_val < min:
+                    mut_val = min
+            return mut_val
+
+        # mutate each element of a ZIP strategy independently
+        # and clip each to remain within bounds
+        if mode == 'gauss':
+            big_sdev = 0.025
+            small_sdev = 0.0025
+            margin_buy = gauss_mutate_clip(s['m_buy'], big_sdev, -1.0, 0)
+            margin_sell = gauss_mutate_clip(s['m_sell'], big_sdev, 0.0, 1.0)
+            beta = gauss_mutate_clip(s['beta'], big_sdev, 0.0, 1.0)
+            momntm = gauss_mutate_clip(s['momntm'], big_sdev, 0.0, 1.0)
+            ca = gauss_mutate_clip(s['ca'], small_sdev, 0.0, 1.0)
+            cr = gauss_mutate_clip(s['cr'], small_sdev, 0.0, 1.0)
+            new_strat = {'m_buy': margin_buy, 'm_sell': margin_sell, 'beta': beta, 'momntm': momntm, 'ca': ca, 'cr': cr}
+        else:
+            sys.exit('FAIL: bad mode in mutate_strat')
+        return new_strat
+
     def __init__(self, ttype, tid, balance, params, time):
+
         Trader.__init__(self, ttype, tid, balance, params, time)
+
+        # this set of one-liner functions named init_*() are just to make the init params obvious for ease of editing
+        # for ZIP, a strategy is specified as a 6-tuple: (margin_buy, margin_sell, beta, momntm, ca, cr)
+        # the 'default' values mentioned in comments below come from Cliff 1997 -- good ranges for most situations
+
+        def init_beta():
+            # in Cliff 1997 the initial beta values are U(0.1, 0.5)
+            return random.uniform(0.1, 0.5)
+
+        def init_momntm():
+            # in Cliff 1997 the initial momentum values are U(0.0, 0.1)
+            return random.uniform(0.0, 0.1)
+
+        def init_ca():
+            # in Cliff 1997 c_a was a system constant, the same for all traders, set to 0.05
+            # here we take the liberty of introducing some variation
+            return random.uniform(0.01, 0.05)
+
+        def init_cr():
+            # in Cliff 1997 c_r was a system constant, the same for all traders, set to 0.05
+            # here we take the liberty of introducing some variation
+            return random.uniform(0.01, 0.05)
+
+        def init_margin():
+            # in Cliff 1997 the initial margin values are U(0.05, 0.35)
+            return random.uniform(0.05, 0.35)
+
+        def init_stratwaittime():
+            # not in Cliff 1997: use whatever limits you think best.
+            return 7200 + random.randint(0, 3600)
+
+        # unpack the params
+        # for ZIPSH and ZIPDE params should include values for optimizer and k
+        # if no params specified then defaults to ZIP with strat values as in Cliff1997
+
+        # default parameter values
+        k = 1
+        optimizer = None    # no optimizer => plain non-optimizing ZIP
+        logging = False
+
+        # did call provide different params?
+        if type(params) is dict:
+            if 'k' in params:
+                k = params['k']
+            if 'optimizer' in params:
+                optimizer = params['optimizer']
+            self.logfile = None
+            if 'logfile' in params:
+                logging = True
+                logfilename = params['logfile'] + '_' + tid + '_log.csv'
+                self.logfile = open(logfilename, 'w')
+
+        self.logging = logging
+        self.k = k                  # how many strategies evaluated at any one time?
+        self.optmzr = optimizer     # what form of strategy-optimizer we're using
+        self.strats = []            # the list of strategies, each of which is a dictionary
+        self.strat_wait_time = init_stratwaittime()     # how many secs do we give any one strat before switching?
+        self.strat_eval_time = self.k * self.strat_wait_time  # time to cycle through evaluating all k strategies
+        self.last_strat_change_time = time  # what time did we last change strategies?
+        self.active_strat = 0       # which of the k strategies are we currently playing? -- start with 0
+        self.profit_epsilon = 0.0 * random.random()     # minimum profit-per-sec difference between strategies that counts
         self.willing = 1
         self.able = 1
-        self.job = None  # this gets switched to 'Bid' or 'Ask' depending on order-type
-        self.active = False  # gets switched to True while actively working an order
-        self.prev_change = 0  # this was called last_d in Cliff'97
-        self.beta = 0.1 + 0.4 * random.random()
-        self.momntm = 0.1 * random.random()
-        self.ca = 0.05  # self.ca & .cr were hard-coded in '97 but parameterised later
-        self.cr = 0.05
-        self.margin = None  # this was called profit in Cliff'97
-        self.margin_buy = -1.0 * (0.05 + 0.3 * random.random())
-        self.margin_sell = 0.05 + 0.3 * random.random()
+        self.job = None             # this gets switched to 'Bid' or 'Ask' depending on order-type
+        self.active = False         # gets switched to True while actively working an order
+        self.prev_change = 0        # this was called last_d in Cliff'97
+        self.beta = init_beta()
+        self.momntm = init_momntm()
+        self.ca = init_ca()         # self.ca & .cr were hard-coded in '97 but parameterised later
+        self.cr = init_cr()
+        self.margin = None          # this was called profit in Cliff'97
+        self.margin_buy = -1.0 * init_margin()
+        self.margin_sell = init_margin()
         self.price = None
         self.limit = None
         # memory of best price & quantity of best bid and ask, on LOB on previous update
@@ -1310,6 +1445,29 @@ class Trader_ZIP(Trader):
         self.prev_best_bid_q = None
         self.prev_best_ask_p = None
         self.prev_best_ask_q = None
+
+        verbose = False
+
+        if k > 1:
+            # we're doing some form of k-armed strategy-optimization
+            # strats[0] is whatever we've just assigned, and is the active strategy
+            strategy = {'m_buy': self.margin_buy, 'm_sell': self.margin_sell, 'beta': self.beta,
+                        'momntm': self.momntm, 'ca': self.ca, 'cr': self.cr}
+            self.strats.append({'stratvec': strategy, 'start_t': time, 'active': True,
+                                'profit': 0, 'pps': 0, 'evaluated': False})
+
+            # rest of *initial* strategy set is generated from same distributions, but these are all inactive
+            for s in range(1, k):
+                strategy = {'m_buy': -1.0 * init_margin(), 'm_sell': init_margin(), 'beta': init_beta(),
+                            'momntm': init_momntm(), 'ca': init_ca(), 'cr': init_cr()}
+                self.strats.append({'stratvec': strategy, 'start_t': time, 'active': False,
+                                    'profit': 0, 'pps': 0, 'evaluated': False})
+
+            if self.logging:
+                self.logfile.write('ZIP, Tid, %s, ttype, %s, optmzr, %s, strat_wait_time, %f, n_strats=%d:\n' %
+                                   (self.tid, self.ttype, self.optmzr, self.strat_wait_time, self.k))
+                for s in self.strats:
+                    self.logfile.write(str(s)+'\n')
 
     def getorder(self, time, countdown, lob):
         if len(self.orders) < 1:
@@ -1326,10 +1484,17 @@ class Trader_ZIP(Trader):
                 # currently a seller (working a sell order)
                 self.margin = self.margin_sell
             quoteprice = int(self.limit * (1 + self.margin))
-            self.price = quoteprice
 
+            lastprice = -1  # dummy value for if there is no lastprice
+            if self.lastquote is not None:
+                lastprice = self.lastquote.price
+
+            self.price = quoteprice
             order = Order(self.tid, self.job, quoteprice, self.orders[0].qty, time, lob['QID'])
             self.lastquote = order
+
+            if self.logging and order.price != lastprice:
+                self.logfile.write('%f, Order:, %s\n' % (time, str(order)))
         return order
 
     # update margin on basis of what happened in market
@@ -1381,7 +1546,149 @@ class Trader_ZIP(Trader):
             # set the price from limit and profit-margin
             self.price = int(round(self.limit * (1.0 + self.margin), 0))
 
-        # #                        print('old=%d diff=%d change=%d price = %d\n' % (oldprice, diff, change, self.price))
+        def load_strat(stratvec, time):
+            # copy the strategy vector into the ZIP trader's params
+            self.margin_buy = stratvec['m_buy']
+            self.margin_sell = stratvec['m_sell']
+            self.beta = stratvec['beta']
+            self.momntm = stratvec['momntm']
+            self.ca = stratvec['ca']
+            self.cr = stratvec['cr']
+            # bookkeeping
+            self.n_trades = 0
+            self.birthtime = time
+            self.balance = 0
+            self.profitpertime = 0
+
+        def strat_activate(t, s_index):
+            # print('t=%f Strat_activate, index=%d, active=%s' % (t, s_index, self.strats[s_index]['active'] ))
+            self.strats[s_index]['start_t'] = t
+            self.strats[s_index]['active'] = True
+            self.strats[s_index]['profit'] = 0.0
+            self.strats[s_index]['pps'] = 0.0
+            self.strats[s]['evaluated'] = False
+
+        # snapshot says whether the caller of respond() should print next frame of system snapshot data
+        snapshot = False
+
+        if self.optmzr == 'ZIPSH':
+
+            # ZIP with simple-stochastic-hillclimber optimization of strategy (hyperparameter values)
+
+            # NB this *cycles* through the available strats in sequence (i.e., it doesn't shuffle them)
+
+            # first update the pps for each active strategy
+            for s in self.strats:
+                # update pps
+                active_flag = s['active']
+                if active_flag:
+                    s['pps'] = self.profitpertime_update(time, s['start_t'], s['profit'])
+
+            # have we evaluated all the strategies?
+            # (could instead just compare active_strat to k, but checking them all in sequence is arguably clearer)
+            # assume that all strats have been evaluated, and search for evidence to the contrary
+            all_evaluated = True
+            for s in self.strats:
+                if s['evaluated'] is False:
+                    all_evaluated = False
+                    break
+
+            if all_evaluated:
+                # time to generate a new set/population of k candidate strategies
+                # NB when the final strategy in the trader's set/popln is evaluated, the set is then sorted into
+                # descending order of profitability, so when we get to here we know that strats[0] is elite
+
+                if verbose and self.tid == 'S00':
+                    print('t=%.3f, ZIPSH %s: strat_eval_time=%.3f,' % (time, self.tid, self.strat_eval_time))
+                    for s in self.strats:
+                        print('%s, start_t=%f, $=%f, pps=%f' %
+                              (self.strat_csv_str(s['stratvec']), s['start_t'], s['profit'], s['pps']))
+
+                # if the difference between the top two strats is too close to call then flip a coin
+                # this is to prevent the same good strat being held constant simply by chance cos it is at index [0]
+                best_strat = 0
+                prof_diff = self.strats[0]['pps'] - self.strats[1]['pps']
+                if abs(prof_diff) < self.profit_epsilon:
+                    # they're too close to call, so just flip a coin
+                    best_strat = random.randint(0, 1)
+
+                    if best_strat == 1:
+                        # need to swap strats[0] and strats[1]
+                        tmp_strat = self.strats[0]
+                        self.strats[0] = self.strats[1]
+                        self.strats[1] = tmp_strat
+
+                # at this stage, strats[0] is our newly-chosen elite-strat, about to replicate & mutate
+
+                # now replicate and mutate the elite into all the other strats
+                for s in range(1, self.k):  # note range index starts at one not zero (elite is at [0])
+                    self.strats[s]['stratvec'] = self.mutate_strat(self.strats[0]['stratvec'], 'gauss')
+                    strat_activate(time, s)
+
+                # and then update (wipe) records for the elite
+                strat_activate(time, 0)
+
+                # load the elite into the ZIP trader params
+                load_strat(self.strats[0]['stratvec'], time)
+
+                self.active_strat = 0
+
+                if verbose and self.tid == 'S00':
+                    print('%s: strat_eval_time=%f, best_strat=%d, MUTATED:' %
+                          (self.tid, self.strat_eval_time, best_strat))
+                    for s in self.strats:
+                        print('%s start_t=%.3f, lifetime=%.3f, $=%.3f, pps=%f' %
+                              (self.strat_csv_str(s['stratvec']), s['start_t'], time - s['start_t'], s['profit'],
+                               s['pps']))
+
+            else:
+                # we're still evaluating
+
+                s = self.active_strat
+                time_elapsed = time - self.strats[s]['start_t']
+                if time_elapsed >= self.strat_wait_time:
+                    # this strategy has had long enough: update records for this strategy, then swap to another strategy
+                    self.strats[s]['active'] = False
+                    self.strats[s]['profit'] = self.balance
+                    self.strats[s]['pps'] = self.profitpertime
+                    self.strats[s]['evaluated'] = True
+
+                    new_strat = s + 1
+                    if new_strat > self.k - 1:
+                        # we've just evaluated the last of this trader's set of strategies
+                        # sort the strategies into order of descending profitability
+                        strats_sorted = sorted(self.strats, key=lambda k: k['pps'], reverse=True)
+                        # strats_sorted = self.strats     # use this as a control: unsorts the strats, gives pure random walk.
+
+                        # the sorted list of strats replaces the existing list
+                        self.strats = strats_sorted
+
+                        # signal that we want to record a system snapshot because this trader's eval loop finished
+                        snapshot = True
+
+                        # NB not updating self.active_strat here because next call to respond() generates new popln
+
+                    else:
+                        # copy the new strategy vector into the trader's params
+                        load_strat(self.strats[new_strat]['stratvec'], time)
+                        self.strats[new_strat]['start_t'] = time
+                        self.active_strat = new_strat
+                        self.strats[new_strat]['active'] = True
+                        self.last_strat_change_time = time
+
+                    if verbose and self.tid == 'S00':
+                        if new_strat > self.k - 1:
+                            print('t=%.3f (%.2fdays) %s ZIPSH respond: strat[%d] elapsed=%.3f; wait_t=%.3f, pps=%f' %
+                                  (time, time / 86400, self.tid, s, time_elapsed, self.strat_wait_time, self.strats[s]['pps']))
+                        else:
+                            print('t=%.3f (%.2fdays) %s ZIPSH respond: strat[%d] elapsed=%.3f; wait_t=%.3f, pps=%f, switching to strat[%d]: %s' %
+                                  (time, time / 86400, self.tid, s, time_elapsed, self.strat_wait_time,
+                                   self.strats[s]['pps'], new_strat,
+                                   self.strat_csv_str(self.strats[new_strat]['stratvec'])))
+
+        elif self.optmzr is None:
+            # this is vanilla ZIP -- nonadaptive, no optimizer, nothing to change here.
+            pass
 
         # what, if anything, has happened on the bid LOB?
         bid_improved = False
@@ -1484,6 +1791,8 @@ class Trader_ZIP(Trader):
         self.prev_best_ask_p = lob_best_ask_p
         self.prev_best_ask_q = lob_best_ask_q
 
+        # return value of respond() tells caller whether to print a new frame of system-snapshot data
+        return snapshot
 
 # ########################---trader-types have all been defined now--################
 
@@ -1555,6 +1864,8 @@ def populate_market(traders_spec, traders, shuffle, verbose):
             return Trader_Sniper('SNPR', name, balance, parameters, time0)
         elif robottype == 'ZIP':
             return Trader_ZIP('ZIP', name, balance, parameters, time0)
+        elif robottype == 'ZIPSH':
+            return Trader_ZIP('ZIPSH', name, balance, parameters, time0)
         elif robottype == 'PRZI':
             return Trader_PRZI('PRZI', name, balance, parameters, time0)
         elif robottype == 'PRSH':
@@ -1577,8 +1888,19 @@ def populate_market(traders_spec, traders, shuffle, verbose):
             traders[t2name] = temp
 
     def unpack_params(trader_params, mapping):
-        # unpack the parameters for PRZI-family of strategies
+        # unpack the parameters for those trader-types that have them
         parameters = None
+        if ttype == 'ZIPSH' or ttype == 'ZIP':
+            # parameters matter...
+            if mapping:
+                parameters = 'landscape-mapper'
+            else:
+                parameters = trader_params.copy()
+                # trader-type determines type of optimizer used
+                if ttype == 'ZIPSH':
+                    parameters['optimizer'] = 'ZIPSH'
+                else:   # ttype=ZIP
+                    parameters['optimizer'] = None
         if ttype == 'PRSH' or ttype == 'PRDE' or ttype == 'PRZI':
             # parameters matter...
             if mapping:
@@ -1775,6 +2097,8 @@ def customer_orders(time, last_update, traders, trader_stats, os, pending, verbo
 
     def getschedmode(time, os):
         got_one = False
+        schedrange = None
+        mode = None
         for sched in os:
             if (sched['from'] <= time) and (time < sched['to']):
                 # within the timezone for this schedule
@@ -1784,7 +2108,7 @@ def customer_orders(time, last_update, traders, trader_stats, os, pending, verbo
                 break  # jump out the loop -- so the first matching timezone has priority over any others
         if not got_one:
             sys.exit('Fail: time=%5.2f not within any timezone in os=%s' % (time, os))
-        return (schedrange, mode)
+        return schedrange, mode
 
     n_buyers = trader_stats['n_buyers']
     n_sellers = trader_stats['n_sellers']
@@ -1852,24 +2176,28 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
 
         best_buyer_id = None
         best_buyer_prof = 0
-        best_buyer_strat = 0
+        best_buyer_strat = None
         best_seller_id = None
         best_seller_prof = 0
-        best_seller_strat = 0
+        best_seller_strat = None
 
+        # loop through traders to find the best
         for t in traders:
             trader = trdrs[t]
 
-            # print('PRSH/PRDE recording, t=%s' % trader)
-            if trader.ttype == 'PRSH' or trader.ttype == 'PRDE':
+            # print('PRSH/PRDE/ZIPSH strategy recording, t=%s' % trader)
+            if trader.ttype == 'PRSH' or trader.ttype == 'PRDE' or trader.ttype == 'ZIPSH':
                 line_str += 'id=,%s, %s,' % (trader.tid, trader.ttype)
 
-                # line_str += 'bal=$,%f, n_trades=,%d, n_strats=,2, ' % (trader.balance, trader.n_trades)
+                if trader.ttype == 'ZIPSH':
+                    # we know that ZIPSH sorts the set of strats into best-first
+                    act_strat = trader.strats[0]['stratvec']
+                    act_prof = trader.strats[0]['pps']
+                else:
+                    act_strat = trader.strats[trader.active_strat]['stratval']
+                    act_prof = trader.strats[trader.active_strat]['pps']
 
-                act_strat = trader.strats[trader.active_strat]['stratval']
-                act_prof = trader.strats[trader.active_strat]['pps']
-
-                line_str += 'actvstrat=,%f, ' % act_strat
+                line_str += 'actvstrat=,%s ' % trader.strat_csv_str(act_strat)
                 line_str += 'actvprof=,%f, ' % act_prof
 
                 if trader.tid[:1] == 'B':
@@ -1888,13 +2216,21 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
                     # wtf?
                     sys.exit('unknown trader id type in market_session')
 
-        line_str += 'best_B_id=,%s, best_B_prof=,%f, best_B_strat=,%f, ' % \
-                    (best_buyer_id, best_buyer_prof, best_buyer_strat)
-        line_str += 'best_S_id=,%s, best_S_prof=,%f, best_S_strat=,%f, ' % \
-                    (best_seller_id, best_seller_prof, best_seller_strat)
+        if best_buyer_id is not None:
+            line_str += 'best_B_id=,%s, best_B_prof=,%f, best_B_strat=, ' % (best_buyer_id, best_buyer_prof)
+            line_str += traders[best_buyer_id].strat_csv_str(best_buyer_strat)
+
+        if best_seller_id is not None:
+            line_str += 'best_S_id=,%s, best_S_prof=,%f, best_S_strat=, ' % (best_seller_id, best_seller_prof)
+            line_str += traders[best_seller_id].strat_csv_str(best_seller_strat)
+
         line_str += '\n'
+
+        if verbose:
+            print('line_str: %s' % line_str)
         stratfile.write(line_str)
         stratfile.flush()
+        os.fsync(stratfile)
 
     def blotter_dump(session_id, traders):
         bdump = open(session_id+'_blotters.csv', 'w')
@@ -1914,6 +2250,8 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
 
     if dump_flags['dump_strats']:
         strat_dump = open(sess_id + '_strats.csv', 'w')
+    else:
+        strat_dump = None
 
     if dump_flags['dump_lobs']:
         lobframes = open(sess_id + '_LOB_frames.csv', 'w')
@@ -1922,6 +2260,8 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
 
     if dump_flags['dump_avgbals']:
         avg_bals = open(sess_id + '_avg_balance.csv', 'w')
+    else:
+        avg_bals = None
 
     # initialise the exchange
     exchange = Exchange()
@@ -1993,21 +2333,21 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
 
             # traders respond to whatever happened
             lob = exchange.publish_lob(time, lobframes, lob_verbose)
+            any_record_frame = False
             for t in traders:
                 # NB respond just updates trader's internal variables
                 # doesn't alter the LOB, so processing each trader in
                 # sequence (rather than random/shuffle) isn't a problem
-                traders[t].respond(time, lob, trade, respond_verbose)
+                record_frame = traders[t].respond(time, lob, trade, respond_verbose)
+                if record_frame:
+                    any_record_frame = True
 
-            if dump_flags['dump_strats']:
-                # log all the PRSH/PRDE/etc strategy info for this timestep?
-                frame_rate = 60 * 60     # print one frame every this many simulated seconds
-
-                if int(time) % frame_rate == 0 and int(time) not in frames_done:
-                    # print one more frame to strategy dumpfile
-                    dump_strats_frame(time, strat_dump, traders)
-                    # record that we've written this frame
-                    frames_done.add(int(time))
+            # log all the PRSH/PRDE/ZIPSH strategy info for this timestep?
+            if any_record_frame and dump_flags['dump_strats']:
+                # print one more frame to strategy dumpfile
+                dump_strats_frame(time, strat_dump, traders)
+                # record that we've written this frame
+                frames_done.add(int(time))
 
         time = time + timestep
 
@@ -2020,7 +2360,7 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
 
     if dump_flags['dump_tape']:
         # dump the tape (transactions only -- not writing cancellations)
-        exchange.tape_dump(sess_id+'_tape.csv', 'w', 'keep')
+        exchange.tape_dump(sess_id + '_tape.csv', 'w', 'keep')
 
     if dump_flags['dump_blotters']:
         # record the blotter for each trader
@@ -2032,10 +2372,6 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
     if dump_flags['dump_lobs']:
         lobframes.close()
 
-
-
-
-
 #############################
 
 # # Below here is where we set up and run a whole series of experiments
@@ -2044,14 +2380,14 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
 if __name__ == "__main__":
 
     # set up common parameters for all market sessions
-    n_days = 1.0     # 1000 days is good, but 3*365=1095, so may as well go for three years.
+    # 1000 days is good, but 3*365=1095, so may as well go for three years.
+    n_days = 10
     start_time = 0.0
     end_time = 60.0 * 60.0 * 24 * n_days
     duration = end_time - start_time
 
     # schedule_offsetfn returns time-dependent offset, to be added to schedule prices
     def schedule_offsetfn(t):
-
         pi2 = math.pi * 2
         c = math.pi * 3000
         wavelength = t / c
@@ -2074,14 +2410,14 @@ if __name__ == "__main__":
     #                     {'from':2*duration/3, 'to':end_time, 'ranges':[range1], 'stepmode':'fixed'}
     #                   ]
 
-    range1 = (60, 60)
+    range1 = (50, 150)
     supply_schedule = [{'from': start_time, 'to': end_time, 'ranges': [range1], 'stepmode': 'fixed'}]
 
-    range2 = (100, 100)
+    range2 = (50, 150)
     demand_schedule = [{'from': start_time, 'to': end_time, 'ranges': [range2], 'stepmode': 'fixed'}]
 
     # new customer orders arrive at each trader approx once every order_interval seconds
-    order_interval = 5
+    order_interval = 15
 
     order_sched = {'sup': supply_schedule, 'dem': demand_schedule,
                    'interval': order_interval, 'timemode': 'drip-poisson'}
@@ -2097,33 +2433,34 @@ if __name__ == "__main__":
 #    sellers_spec = [('PRSH', 30),(opponent, opp_N-1)]
 #    buyers_spec = [(opponent, opp_N)]
 
-    sellers_spec = [('PRSH', 5, {'k': 4, 's_min': -1.0, 's_max': +1.0}),
-                    ('PRDE', 5, {'k': 4, 's_min': -1.0, 's_max': +1.0})]
-    buyers_spec = sellers_spec
-
-    traders_spec = {'sellers': sellers_spec, 'buyers': buyers_spec}
 
     # run a sequence of trials, one session per trial
 
     verbose = False
 
     # n_trials is how many trials (i.e. market sessions) to run in total
-    n_trials = 3
+    n_trials = 5
 
     # n_recorded is how many trials (i.e. market sessions) to write full data-files for
-    n_trials_recorded = 1
+    n_trials_recorded = 5
 
     trial = 1
 
     while trial < (n_trials+1):
+
         # create unique i.d. string for this trial
         trial_id = 'bse_d%03d_i%02d_%04d' % (n_days, order_interval, trial)
+
+        buyers_spec = [('ZIPSH', 10, {'k': 4})]
+        sellers_spec = [('ZIPSH', 10, {'k': 4})]
+
+        traders_spec = {'sellers': sellers_spec, 'buyers': buyers_spec}
 
         if trial > n_trials_recorded:
             dump_flags = {'dump_blotters': False, 'dump_lobs': False, 'dump_strats': False,
                           'dump_avgbals': False, 'dump_tape': False}
         else:
-            dump_flags = {'dump_blotters': True, 'dump_lobs': True, 'dump_strats': True,
+            dump_flags = {'dump_blotters': True, 'dump_lobs': False, 'dump_strats': True,
                           'dump_avgbals': True, 'dump_tape': True}
 
         market_session(trial_id, start_time, end_time, traders_spec, order_sched, dump_flags, verbose)
