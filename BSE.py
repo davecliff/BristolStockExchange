@@ -1894,7 +1894,7 @@ def populate_market(traders_spec, traders, shuffle, verbose):
             # parameters matter...
             if mapping:
                 parameters = 'landscape-mapper'
-            else:
+            elif trader_params is not None:
                 parameters = trader_params.copy()
                 # trader-type determines type of optimizer used
                 if ttype == 'ZIPSH':
