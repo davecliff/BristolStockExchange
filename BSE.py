@@ -495,7 +495,7 @@ class Trader:
         self.del_order(order)  # delete the order
 
         # if the trader has multiple strategies (e.g. PRSH/PRDE/ZIPSH/ZIPDE) then there is more work to do...
-        if hasattr(self, 'strats'):
+        if hasattr(self, 'strats') and self.strats is not None:
             self.strats[self.active_strat]['profit'] += profit
             totalprofit = self.strats[self.active_strat]['profit']
             birthtime = self.strats[self.active_strat]['start_t']
@@ -1417,15 +1417,8 @@ class Trader_ZIP(Trader):
                 logfilename = params['logfile'] + '_' + tid + '_log.csv'
                 self.logfile = open(logfilename, 'w')
 
+        # the following set of variables are needed for original ZIP *and* for its optimizing extensions e.g. ZIPSH
         self.logging = logging
-        self.k = k                  # how many strategies evaluated at any one time?
-        self.optmzr = optimizer     # what form of strategy-optimizer we're using
-        self.strats = []            # the list of strategies, each of which is a dictionary
-        self.strat_wait_time = init_stratwaittime()     # how many secs do we give any one strat before switching?
-        self.strat_eval_time = self.k * self.strat_wait_time  # time to cycle through evaluating all k strategies
-        self.last_strat_change_time = time  # what time did we last change strategies?
-        self.active_strat = 0       # which of the k strategies are we currently playing? -- start with 0
-        self.profit_epsilon = 0.0 * random.random()     # minimum profit-per-sec difference between strategies that counts
         self.willing = 1
         self.able = 1
         self.job = None             # this gets switched to 'Bid' or 'Ask' depending on order-type
@@ -1433,23 +1426,33 @@ class Trader_ZIP(Trader):
         self.prev_change = 0        # this was called last_d in Cliff'97
         self.beta = init_beta()
         self.momntm = init_momntm()
-        self.ca = init_ca()         # self.ca & .cr were hard-coded in '97 but parameterised later
+        self.ca = init_ca()         # self.ca & self.cr were hard-coded in '97 but parameterised later
         self.cr = init_cr()
         self.margin = None          # this was called profit in Cliff'97
         self.margin_buy = -1.0 * init_margin()
         self.margin_sell = init_margin()
         self.price = None
         self.limit = None
-        # memory of best price & quantity of best bid and ask, on LOB on previous update
-        self.prev_best_bid_p = None
-        self.prev_best_bid_q = None
-        self.prev_best_ask_p = None
-        self.prev_best_ask_q = None
+        self.prev_best_bid_p = None     # best bid price on LOB on previous update
+        self.prev_best_bid_q = None     # best bid quantity on LOB on previous update
+        self.prev_best_ask_p = None     # best ask price on LOB on previous update
+        self.prev_best_ask_q = None     # best ask quantity on LOB on previous update
+
+        # the following set of variables are needed only by ZIP with added hyperparameter optimization (e.g. ZIPSH)
+        self.k = k                  # how many strategies evaluated at any one time?
+        self.optmzr = optimizer     # what form of strategy-optimizer we're using
+        self.strats = None          # the list of strategies, each of which is a dictionary
+        self.strat_wait_time = init_stratwaittime()     # how many secs do we give any one strat before switching?
+        self.strat_eval_time = self.k * self.strat_wait_time  # time to cycle through evaluating all k strategies
+        self.last_strat_change_time = time  # what time did we last change strategies?
+        self.active_strat = 0       # which of the k strategies are we currently playing? -- start with 0
+        self.profit_epsilon = 0.0 * random.random()     # min profit-per-sec difference between strategies that counts
 
         verbose = False
 
-        if k > 1:
-            # we're doing some form of k-armed strategy-optimization
+        if self.optmzr is not None and k > 1:
+            # we're doing some form of k-armed strategy-optimization with multiple strategies
+            self.strats = []
             # strats[0] is whatever we've just assigned, and is the active strategy
             strategy = {'m_buy': self.margin_buy, 'm_sell': self.margin_sell, 'beta': self.beta,
                         'momntm': self.momntm, 'ca': self.ca, 'cr': self.cr}
@@ -1463,11 +1466,11 @@ class Trader_ZIP(Trader):
                 self.strats.append({'stratvec': strategy, 'start_t': time, 'active': False,
                                     'profit': 0, 'pps': 0, 'evaluated': False})
 
-            if self.logging:
-                self.logfile.write('ZIP, Tid, %s, ttype, %s, optmzr, %s, strat_wait_time, %f, n_strats=%d:\n' %
-                                   (self.tid, self.ttype, self.optmzr, self.strat_wait_time, self.k))
-                for s in self.strats:
-                    self.logfile.write(str(s)+'\n')
+        if self.logging:
+            self.logfile.write('ZIP, Tid, %s, ttype, %s, optmzr, %s, strat_wait_time, %f, n_strats=%d:\n' %
+                               (self.tid, self.ttype, self.optmzr, self.strat_wait_time, self.k))
+            for s in self.strats:
+                self.logfile.write(str(s)+'\n')
 
     def getorder(self, time, countdown, lob):
         if len(self.orders) < 1:
@@ -2453,6 +2456,9 @@ if __name__ == "__main__":
 
         buyers_spec = [('ZIPSH', 10, {'k': 4})]
         sellers_spec = [('ZIPSH', 10, {'k': 4})]
+
+        buyers_spec = [('SHVR', 5), ('GVWY', 5), ('ZIC', 5), ('ZIP', 5)]
+        sellers_spec = buyers_spec
 
         traders_spec = {'sellers': sellers_spec, 'buyers': buyers_spec}
 
