@@ -1569,7 +1569,7 @@ class Trader_ZIP(Trader):
             self.strats[s_index]['active'] = True
             self.strats[s_index]['profit'] = 0.0
             self.strats[s_index]['pps'] = 0.0
-            self.strats[s]['evaluated'] = False
+            self.strats[s_index]['evaluated'] = False
 
         # snapshot says whether the caller of respond() should print next frame of system snapshot data
         snapshot = False
