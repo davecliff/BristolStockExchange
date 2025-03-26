@@ -2718,17 +2718,18 @@ def populate_market(trdrs_spec, traders, shuffle, vrbs):
         shuffle_traders('S', n_sellers, traders)
 
     n_proptraders = 0
-    for pts in trdrs_spec['proptraders']:
-        ttype = pts[0]
-        for pt in range(pts[1]):
-            tname = 'P%02d' % n_proptraders  # proptrader i.d. string
-            if len(pts) > 2:
-                # third part of the buyer-spec is params for this trader-type
-                params = unpack_params(pts[2], landscape_mapping)
-            else:
-                params = unpack_params(None, landscape_mapping)
-            traders[tname] = trader_type(ttype, tname, params)
-            n_proptraders = n_proptraders + 1
+    if len(trdrs_spec['proptraders']) > 0:
+        for pts in trdrs_spec['proptraders']:
+            ttype = pts[0]
+            for pt in range(pts[1]):
+                tname = 'P%02d' % n_proptraders  # proptrader i.d. string
+                if len(pts) > 2:
+                    # third part of the buyer-spec is params for this trader-type
+                    params = unpack_params(pts[2], landscape_mapping)
+                else:
+                    params = unpack_params(None, landscape_mapping)
+                traders[tname] = trader_type(ttype, tname, params)
+                n_proptraders = n_proptraders + 1
 
     # NB markets with zero proptraders don't cause a fatal error
 
