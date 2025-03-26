@@ -3132,7 +3132,7 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
         # how much time left, as a percentage?
         time_left = (endtime - time) / session_duration
 
-        if verbose:
+        if sess_vrbs:
             print('\n\n%s; t=%08.2f (%4.1f/100) ' % (sess_id, time, time_left*100))
 
         [pending_cust_orders, kills] = customer_orders(time, traders, trader_stats,
