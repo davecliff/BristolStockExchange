@@ -2718,7 +2718,7 @@ def populate_market(trdrs_spec, traders, shuffle, vrbs):
         shuffle_traders('S', n_sellers, traders)
 
     n_proptraders = 0
-    if len(trdrs_spec['proptraders']) > 0:
+    if 'proptraders' in trdrs_spec and len(trdrs_spec['proptraders']) > 0:
         for pts in trdrs_spec['proptraders']:
             ttype = pts[0]
             for pt in range(pts[1]):
