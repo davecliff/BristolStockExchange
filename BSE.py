@@ -3081,7 +3081,7 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
     process_verbose = False
     respond_verbose = False
     bookkeep_verbose = False
-    populate_verbose = True
+    populate_verbose = False
 
     if dumpfile_flags['dump_strats']:
         strat_dump = open(sess_id + '_strats.csv', 'w')
